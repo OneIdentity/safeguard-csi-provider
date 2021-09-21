@@ -1,0 +1,114 @@
+{{- if .Values.linux.enabled}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ template "sscdpa.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+{{ include "sscdpa.labels" . | indent 2 }}
+spec:
+  updateStrategy:
+{{ toYaml .Values.linux.updateStrategy | indent 4 }}
+  selector:
+    matchLabels:
+      app: {{ template "sscdpa.name" . }}
+  template:
+    metadata:
+{{ include "sscdpa.labels" . | indent 6 }}
+{{- if .Values.linux.podLabels }}
+{{- toYaml .Values.linux.podLabels | nindent 8 }}
+{{- end }}
+{{- if .Values.linux.podAnnotations }}
+      annotations:
+{{- toYaml .Values.linux.podAnnotations | nindent 8 }}
+{{- end }}
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      {{- end }}
+      serviceAccountName: safeguard-csi-provider
+      hostNetwork: true
+      containers:
+        - name: provider-azure-installer
+          image: "{{ .Values.linux.image.repository }}:{{ .Values.linux.image.tag }}"
+          imagePullPolicy: {{ .Values.linux.image.pullPolicy }}
+          args:
+            - --endpoint=unix:///provider/azure.sock
+            {{- if .Values.logFormatJSON }}
+            - --log-format-json={{ .Values.logFormatJSON }}
+            {{- end }}
+            {{- if .Values.logVerbosity }}
+            - -v={{ .Values.logVerbosity }}
+            {{- end }}
+            {{- if .Values.constructPEMChain }}
+            - --construct-pem-chain={{ .Values.constructPEMChain }}
+            {{- end }}
+            {{- if .Values.linux.customUserAgent }}
+            - --custom-user-agent={{ .Values.linux.customUserAgent }}
+            {{- end }}
+            - --healthz-port={{ .Values.linux.healthzPort }}
+            - --healthz-path={{ .Values.linux.healthzPath }}
+            - --healthz-timeout={{ .Values.linux.healthzTimeout }}
+            {{- if .Values.driverWriteSecrets }}
+            - --driver-write-secrets={{ .Values.driverWriteSecrets }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.linux.healthzPath }}
+              port: {{ .Values.linux.healthzPort }}
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            timeoutSeconds: 10
+            periodSeconds: 30
+          resources:
+{{ toYaml .Values.linux.resources | indent 12 }}
+          securityContext:
+          {{- if not .Values.linux.privileged }}
+            allowPrivilegeEscalation: false
+          {{- end }}
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+            capabilities:
+              drop:
+              - ALL
+          {{- if .Values.linux.privileged }}
+            privileged: true
+          {{- end }}
+          volumeMounts:
+            - name: provider-vol
+              mountPath: /provider
+            {{- if not .Values.driverWriteSecrets }}
+            - name: mountpoint-dir
+              mountPath: {{ .Values.linux.kubeletRootDir }}/pods
+              mountPropagation: HostToContainer
+            {{- end }}
+            {{- if .Values.linux.volumeMounts }}
+            {{- toYaml .Values.linux.volumeMounts | nindent 12 }}
+            {{- end}}
+      affinity:
+{{ toYaml .Values.linux.affinity | indent 8 }}
+      {{- if .Values.linux.priorityClassName }}
+      priorityClassName: {{ .Values.linux.priorityClassName | quote }}
+      {{- end }}
+      volumes:
+        - name: provider-vol
+          hostPath:
+            path: "/etc/kubernetes/secrets-store-csi-providers"
+        {{- if not .Values.driverWriteSecrets }}
+        - name: mountpoint-dir
+          hostPath:
+            path: {{ .Values.linux.kubeletRootDir }}/pods
+        {{- end }}
+        {{- if .Values.linux.volumes }}
+        {{- toYaml .Values.linux.volumes | nindent 8 }}
+        {{- end}}
+      nodeSelector:
+        kubernetes.io/os: linux
+{{- if .Values.linux.nodeSelector }}
+{{- toYaml .Values.linux.nodeSelector | nindent 8 }}
+{{- end }}
+{{- with .Values.linux.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- end -}}
