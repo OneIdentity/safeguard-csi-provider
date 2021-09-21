@@ -84,7 +84,7 @@ func (s *CSIDriverProviderServer) Version(ctx context.Context, req *v1alpha1.Ver
 	return &v1alpha1.VersionResponse{
 		Version:        "v1alpha1",
 		RuntimeVersion: version.BuildVersion,
-		RuntimeName:    "secrets-store-csi-driver-provider-azure",
+		RuntimeName:    "safeguard-csi-provider",
 	}, nil
 }
 
