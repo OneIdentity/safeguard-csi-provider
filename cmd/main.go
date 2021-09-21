@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/Azure/go-autorest/autorest/adal"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec
@@ -14,13 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/OneIdentity/safeguard-csi-provider/pkg/metrics"
-	"github.com/OneIdentity/safeguard-csi-provider/pkg/provider"
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/server"
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/utils"
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/version"
 
-	"github.com/Azure/go-autorest/autorest/adal"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	json "k8s.io/component-base/logs/json"
@@ -42,9 +40,6 @@ var (
 	// driverWriteSecrets feature is enabled by default in v0.1.0 release. All writes to the pod filesystem will now be done by the CSI driver instead of provider.
 	// this flag will be removed in the future.
 	driverWriteSecrets = flag.Bool("driver-write-secrets", true, "[DEPRECATED] Return secrets in gRPC response to the driver (supported in driver v0.0.21+) instead of writing to filesystem")
-
-	metricsBackend = flag.String("metrics-backend", "Prometheus", "Backend used for metrics")
-	prometheusPort = flag.Int("prometheus-port", 8898, "Prometheus port for metrics backend")
 )
 
 func main() {
@@ -76,16 +71,7 @@ func main() {
 			klog.ErrorS(http.ListenAndServe(addr, nil), "unable to start profiling server")
 		}()
 	}
-	// initialize metrics exporter before creating measurements
-	err := metrics.InitMetricsExporter(*metricsBackend, *prometheusPort)
-	if err != nil {
-		klog.ErrorS(err, "failed to initialize metrics exporter")
-		os.Exit(1)
-	}
 
-	if *provider.ConstructPEMChain {
-		klog.Infof("construct pem chain feature enabled")
-	}
 	if !*driverWriteSecrets {
 		klog.Infof("driver write secrets feature can't be disabled. The --driver-write-secret flag will be removed in future releases.")
 	}

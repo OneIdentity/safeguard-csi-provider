@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OneIdentity/safeguard-csi-provider/pkg/metrics"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -28,7 +26,6 @@ func ParseEndpoint(ep string) (string, string, error) {
 func LogInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		start := time.Now()
-		reporter := metrics.NewStatsReporter()
 
 		ctxDeadline, _ := ctx.Deadline()
 		klog.V(5).InfoS("request", "method", info.FullMethod, "deadline", time.Until(ctxDeadline).String())
@@ -36,7 +33,6 @@ func LogInterceptor() grpc.UnaryServerInterceptor {
 		resp, err := handler(ctx, req)
 		s, _ := status.FromError(err)
 		klog.V(5).InfoS("response", "method", info.FullMethod, "duration", time.Since(start).String(), "code", s.Code().String(), "message", s.Message())
-		reporter.ReportGRPCRequest(ctx, time.Since(start).Seconds(), info.FullMethod, s.Code().String(), s.Message())
 
 		return resp, err
 	}
