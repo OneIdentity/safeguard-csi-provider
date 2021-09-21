@@ -2,10 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"github.com/Azure/go-autorest/autorest/adal"
 	"net"
-	"net/http"
 	_ "net/http/pprof" // #nosec
 	"net/url"
 	"os"
@@ -30,16 +27,10 @@ var (
 	versionInfo   = flag.Bool("version", false, "prints the version information")
 	endpoint      = flag.String("endpoint", "unix:///tmp/azure.sock", "CSI gRPC endpoint")
 	logFormatJSON = flag.Bool("log-format-json", false, "set log formatter to json")
-	enableProfile = flag.Bool("enable-pprof", false, "enable pprof profiling")
-	profilePort   = flag.Int("pprof-port", 6060, "port for pprof profiling")
 
 	healthzPort    = flag.Int("healthz-port", 8989, "port for health check")
 	healthzPath    = flag.String("healthz-path", "/healthz", "path for health check")
 	healthzTimeout = flag.Duration("healthz-timeout", 5*time.Second, "RPC timeout for health check")
-
-	// driverWriteSecrets feature is enabled by default in v0.1.0 release. All writes to the pod filesystem will now be done by the CSI driver instead of provider.
-	// this flag will be removed in the future.
-	driverWriteSecrets = flag.Bool("driver-write-secrets", true, "[DEPRECATED] Return secrets in gRPC response to the driver (supported in driver v0.0.21+) instead of writing to filesystem")
 )
 
 func main() {
@@ -64,22 +55,6 @@ func main() {
 	}
 	klog.InfoS("Starting Safeguard Provider", "version", version.BuildVersion)
 
-	if *enableProfile {
-		klog.InfoS("Starting profiling", "port", *profilePort)
-		go func() {
-			addr := fmt.Sprintf("%s:%d", "localhost", *profilePort)
-			klog.ErrorS(http.ListenAndServe(addr, nil), "unable to start profiling server")
-		}()
-	}
-
-	if !*driverWriteSecrets {
-		klog.Infof("driver write secrets feature can't be disabled. The --driver-write-secret flag will be removed in future releases.")
-	}
-	// Add csi-secrets-store user agent to adal requests
-	if err := adal.AddToUserAgent(version.GetUserAgent()); err != nil {
-		klog.ErrorS(err, "failed to add user agent to adal")
-		os.Exit(1)
-	}
 	// Initialize and run the gRPC server
 	proto, addr, err := utils.ParseEndpoint(*endpoint)
 	if err != nil {
