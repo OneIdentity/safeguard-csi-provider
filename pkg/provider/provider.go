@@ -2,24 +2,20 @@ package provider
 
 import (
 	"bytes"
-	"crypto/rsa"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
-	"flag"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"net/url"
 	"os"
-)
+	"strconv"
+	"strings"
 
-var (
-	certFile = flag.String("cert", "C:\\temp\\certs\\example.crt", "A PEM encoded certificate file.")
-	keyFile  = flag.String("key", "C:\\temp\\certs\\example.key", "A PEM encoded private key file.")
-	caFile = flag.String("CA", "C:\\temp\\certs\\example.crt", "A PEM encoded CA's certificate file.")
+	"k8s.io/klog/v2"
 )
 
 type Provider struct {
@@ -36,120 +32,233 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 	objectVersionMap := make(map[string]string)
 	files := make(map[string][]byte)
 
-	flag.Parse()
+	sgHost := strings.TrimSpace(attrib["safeguardHost"])
+	appName := strings.TrimSpace(attrib["appName"])
+	podName := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.name"])
+	podNamespace := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.namespace"])
 
+	var clientCertificate, clientKey []byte
 
+	for k, v := range secrets {
+		switch k {
+		case "clientCertificate":
+			clientCertificate = []byte(v)
+		case "clientKey":
+			clientKey = []byte(v)
+		}
+	}
 
-	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
+	cert, err := tls.X509KeyPair(clientCertificate, clientKey)
 	if err != nil {
-		log.Fatal(err)
+		klog.Error(err)
+		return files, objectVersionMap, err
 	}
 
-	// Load CA cert
-	caCert, err := ioutil.ReadFile(*caFile)
+	// Get bearer token
+	accessToken, err := p.GetToken(sgHost, cert)
 	if err != nil {
-		log.Fatal(err)
+		klog.Error(err)
+		return files, objectVersionMap, err
 	}
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
 
-	// Setup HTTPS client
-	//http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	//http.DefaultTransport.(*http.Transport).TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-		InsecureSkipVerify: true,
-	}
-	tlsConfig.BuildNameToCertificate()
-	transport := &http.Transport{TLSClientConfig: tlsConfig}
-	client := &http.Client{Transport: transport}
-
-	values := map[string]string{"grant_type": "client_credentials", "scope": "rsts:sts:primaryproviderid:certificate"}
-	json_data, err := json.Marshal(values)
-
-	resp, err := client.Post("https://sts-dev.cloud.oneidentity.com/auth/realms/StarlingClients/protocol/openid-connect/token", "application/json", bytes.NewBuffer(json_data))
+	// Get the A2A registrations for this client certificate
+	registrations, err := p.GetA2aRegistrations(sgHost, accessToken, cert)
 	if err != nil {
-		log.Fatal(err)
+		klog.Error(err)
+		return files, objectVersionMap, err
 	}
-	defer resp.Body.Close()
 
-	// Dump response
-	//data, err := ioutil.ReadAll(resp.Body)
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
-	//log.Println(string(data))
+	if len(registrations) == 0 {
+		klog.Error("No app registrations were found")
+		return files, objectVersionMap, fmt.Errorf("no app registrations were round")
+	}
 
-	var res map[string]interface{}
+	appRegistration := Find(registrations, appName)
+	if appRegistration == nil {
+		klog.Errorf("Requested app name %s was not found", appName)
+		return files, objectVersionMap, fmt.Errorf("requested app name %s was not found", appName)
+	}
 
-	json.NewDecoder(resp.Body).Decode(&res)
-
-	log.Println(res["access_token"])
-
-
-
-// below starts to look at getting the registered assets....
-
-
-	url := "https://customer-asrtest18.westus.cloudapp.azure.com/service/core/v3/A2ARegistrations"
-
-	// Create a Bearer, we need the certificates to work to get a token
-	var bearer = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6ImVJekpha3RRb0ZsQkQ1SXFBUzYxUDdGb2J5byJ9.eyJpc3MiOiJodHRwczovLzc4OENDOTZBNEI1MEEwNTk0MTBGOTIyQTAxMkVCNTNGQjE2ODZGMkEiLCJuYmYiOjE2MzIzMTMxMjEsImV4cCI6MTYzMjMxMzQyMSwiYXV0aG1ldGhvZCI6ImNlcnRpZmljYXRlOmNlcnQiLCJhdXRoX3RpbWUiOiIyMDIxLTA5LTIyVDEyOjE4OjQxLjUyNjA3NzRaIiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS9hY2Nlc3Njb250cm9sc2VydmljZS8yMDEwLzA3L2NsYWltcy9pZGVudGl0eXByb3ZpZGVyIjoiaHR0cHM6Ly83ODhDQzk2QTRCNTBBMDU5NDEwRjkyMkEwMTJFQjUzRkIxNjg2RjJBIiwidXJuOnJzdHMvanRpIjoiMDdmMzA4M2MxYTNhNDczMjk2YmNjNjE5ZWEwMjliOTUiLCJuYW1laWQiOiJDQUU2MUMzNTkxMjdEMEJBNDI0MzQ1RDc5MDE5QzdFOEM3ODhFNjJGIiwidXBuIjoiazhzLXN2YyIsImVtYWlsIjoiIiwidW5pcXVlX25hbWUiOiIiLCJ1cm46cnN0cy9kYXlzVW50aWxQYXNzd29yZEV4cGlyZXMiOiIxMDY3NTE5OS4xMTY3MzAxIiwicnN0czpzdHM6Y2xhaW1zOnVzZXI6dXNlcklkIjoiNCIsInN1YiI6IkNBRTYxQzM1OTEyN0QwQkE0MjQzNDVENzkwMTlDN0U4Qzc4OEU2MkYiLCJhenAiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJyc3RzOnN0czpjbGFpbXM6c2NvcGUiOiJyc3RzOnN0czpwcmltYXJ5cHJvdmlkZXJpZDpjZXJ0aWZpY2F0ZTpjZXJ0IiwicnN0czpzdHM6Y2xhaW1zOnNudG5sIjoiMCJ9.YkY929jTuYxkKBuFwK90Ae_6yO3Ni4RLOjt3g5q3fsQF2k14e1J4k01sqesdVORLXaeXUXOXdUJnMejgcBzOOHFycsaP09PrVTkoPGKVQFPJxSTDDWC7_X_aJBT4A4Y932ogQTYyyMNPnEM5oFB_JCHhIF15zLO7Wxmhyq6NmulK529A9ggPe2x96JP8KrkZPRQlGNrU2f-s6w0xPd5z3OVSjY9miXc7vPKb4ZQVHMm9hTwyx3orlUMEKTpj3StBvN8n4fmrGhuOYsGM-vsyaoChvZxJr2jmpkYtw22ui0ZqqyfgLeO8CYZ5QHWIithtcAbMN1xuOD91cWMKHPmkUw"
-
-
-
-	// Create a new request using http
-	req, err := http.NewRequest("GET", url, nil)
-
-	// add authorization header to the req
-	req.Header.Add("Authorization", bearer)
-
-	// Send req using http Client
-	client = &http.Client{}
-	resp, err = client.Do(req)
+	// Get retrievable accounts for this registration
+	accounts, err := p.GetRetrievableAccounts(sgHost, appRegistration, accessToken, cert)
 	if err != nil {
-		log.Fatal(err)
+		klog.Error(err)
+		return files, objectVersionMap, err
 	}
-	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
+	if len(accounts) == 0 {
+		klog.Warning("No accounts were found")
+		return files, objectVersionMap, err
 	}
-	log.Println(string([]byte(body)))
 
-	// TODO: Fetch secrets from Safeguard
+	// Get each account credential and map into data being returned to driver
+	for _, account := range accounts {
+		klog.Infof("Looking up %s", account.AccountName)
+
+		cred, err := p.GetCredential(sgHost, account, cert)
+		if err != nil {
+			klog.Errorf("Could not fetch secret %s because %s", account.AccountName, err.Error())
+			continue
+		}
+
+		// TODO: We should figure out how to grab a proper version
+		objectVersionMap[strconv.Itoa(account.AccountId)] = uuid.New().String()
+		files[account.AccountName] = cred
+
+		klog.InfoS("added file to the gRPC response", "file", account.AccountName, "pod", klog.ObjectRef{Namespace: podNamespace, Name: podName})
+	}
+
 	return files, objectVersionMap, nil
 }
 
-func LoadX509KeyPair(certFile, keyFile string) (*x509.Certificate, *rsa.PrivateKey) {
-	cf, e := ioutil.ReadFile(certFile)
-	if e != nil {
-		fmt.Println("cfload:", e.Error())
-		os.Exit(1)
+func (p *Provider) GetA2aRegistrations(sgHost string, accessToken string, cert tls.Certificate) ([]*A2ARegistration, error) {
+	resp, err := p.SendGetRequest(sgHost, "/service/core/v3/A2ARegistrations", nil, cert, &accessToken, nil)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		klog.Errorf("Request failed with status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
 	}
 
-	kf, e := ioutil.ReadFile(keyFile)
-	if e != nil {
-		fmt.Println("kfload:", e.Error())
-		os.Exit(1)
-	}
-	cpb, cr := pem.Decode(cf)
-	fmt.Println(string(cr))
-	kpb, kr := pem.Decode(kf)
-	fmt.Println(string(kr))
-	crt, e := x509.ParseCertificate(cpb.Bytes)
+	defer resp.Body.Close()
+	// TODO: Error handling?
+	var registrations []*A2ARegistration
+	json.NewDecoder(resp.Body).Decode(&registrations)
+	return registrations, nil
+}
 
-	if e != nil {
-		fmt.Println("parsex509:", e.Error())
-		os.Exit(1)
+func (p *Provider) GetRetrievableAccounts(sgHost string, reg *A2ARegistration, accessToken string, cert tls.Certificate) ([]*RetrievableAccount, error) {
+	resp, err := p.SendGetRequest(sgHost, fmt.Sprintf("/service/core/v3/A2ARegistrations/%s/RetrievableAccounts", strconv.Itoa(reg.Id)), nil, cert, &accessToken, nil)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		klog.Errorf("Request failed with status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
 	}
-	key, e := x509.ParsePKCS1PrivateKey(kpb.Bytes)
-	if e != nil {
-		fmt.Println("parsekey:", e.Error())
-		os.Exit(1)
+
+	defer resp.Body.Close()
+	// TODO: Error handling?
+	var accounts []*RetrievableAccount
+	json.NewDecoder(resp.Body).Decode(&accounts)
+	return accounts, nil
+}
+
+func (p *Provider) GetCredential(sgHost string, account *RetrievableAccount, cert tls.Certificate) ([]byte, error) {
+	params := make(map[string]string)
+	params["type"] = "Password"
+
+	resp, err := p.SendGetRequest(sgHost, "/service/a2a/v3/Credentials", params, cert, nil, &account.ApiKey)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		klog.Errorf("Request failed with status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
 	}
-	return crt, key
+
+	defer resp.Body.Close()
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+	return bodyBytes, nil
+}
+
+func (p *Provider) SendGetRequest(sgHost string, path string, params map[string]string, cert tls.Certificate, accessToken *string, apiKey *string) (*http.Response, error){
+	url, err := url.Parse(sgHost)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+
+	url.Path = path
+
+	if params != nil {
+		for key, value := range params {
+			url.Query().Set(key, value)
+		}
+	}
+
+	req, err := http.NewRequest("GET", url.String(), nil)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+
+	if accessToken != nil {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *accessToken))
+	} else if apiKey != nil {
+		req.Header.Set("Authorization", fmt.Sprintf("A2A %s", *apiKey))
+
+	}
+
+	resp, err := p.SendRequest(req, cert)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (string, error){
+	url, err := url.Parse(sgHost)
+	if err != nil {
+		klog.Error(err)
+		return "", err
+	}
+
+	url.Path = "/RSTS/oauth2/token"
+	values := map[string]string{"grant_type": "client_credentials", "scope": "rsts:sts:primaryproviderid:certificate"}
+	jsonData, err := json.Marshal(values)
+
+	req, err := http.NewRequest("POST", url.String(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		klog.Error(err)
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.SendRequest(req, cert)
+	if err != nil {
+		klog.Error(err)
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	tr := p.DeserializeJsonToMap(resp)
+
+	if val, ok := tr["access_token"]; ok {
+		return fmt.Sprintf("%v", val), nil
+	}
+
+	return "", errors.New("access_token didn't exist in returned payload")
+}
+
+func (p *Provider) DeserializeJsonToMap(resp *http.Response) map[string]interface{} {
+	// TODO: Error handling?
+	var res map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&res)
+	klog.Info(res)
+
+	return res
+}
+
+func (p *Provider) GetTlsTransport(cert tls.Certificate) *http.Transport {
+	tlsConfig := &tls.Config{
+		Renegotiation: tls.RenegotiateFreelyAsClient,
+		Certificates: []tls.Certificate{cert},
+	}
+
+	return &http.Transport{TLSClientConfig: tlsConfig}
+}
+
+func (p *Provider) SendRequest(req *http.Request, cert tls.Certificate) (*http.Response, error){
+	transport := p.GetTlsTransport(cert)
+	client := &http.Client{Transport: transport}
+	return client.Do(req)
 }
