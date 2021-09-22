@@ -1,0 +1,249 @@
+{
+	"info": {
+		"_postman_id": "01eb76be-7f33-4a2a-a2e5-a8aab42c1aa3",
+		"name": "Safeguard",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Get Token via Cert",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"grant_type\": \"client_credentials\",\n    \"scope\": \"rsts:sts:primaryproviderid:certificate\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{SafeguardUri}}/RSTS/oauth2/token",
+					"host": [
+						"{{SafeguardUri}}"
+					],
+					"path": [
+						"RSTS",
+						"oauth2",
+						"token"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get A2A Registrations",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{SafeguardUri}}/service/core/v3/A2ARegistrations",
+					"host": [
+						"{{SafeguardUri}}"
+					],
+					"path": [
+						"service",
+						"core",
+						"v3",
+						"A2ARegistrations"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get A2A Registrations RetrievableAccounts",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{SafeguardUri}}/service/core/v3/A2ARegistrations/1/RetrievableAccounts",
+					"host": [
+						"{{SafeguardUri}}"
+					],
+					"path": [
+						"service",
+						"core",
+						"v3",
+						"A2ARegistrations",
+						"1",
+						"RetrievableAccounts"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get Account Password",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "A2A mVDhJOelKVkj5tOG5jOU67vzAMv4GaO3/F9jR6/BN0c=",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "Authorization",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{SafeguardUri}}/service/a2a/v3/Credentials?type=Password",
+					"host": [
+						"{{SafeguardUri}}"
+					],
+					"path": [
+						"service",
+						"a2a",
+						"v3",
+						"Credentials"
+					],
+					"query": [
+						{
+							"key": "type",
+							"value": "Password"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{sppAccessToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"const accessTokenParsed = jwsDecode(pm.collectionVariables.get(\"sppAccessToken\"));",
+					"const accessTokenExpired = isTokenExpired(accessTokenParsed);",
+					"",
+					"let tokenUri = pm.variables.replaceIn(pm.collectionVariables.get(\"SafeguardUri\") + \"/RSTS/oauth2/token\");",
+					"",
+					"if(accessTokenExpired) {",
+					"    GetAccessToken(tokenUri, \"sppAccessToken\");",
+					"}",
+					"",
+					"function padString(input) {",
+					"    let segmentLength = 4;",
+					"    let stringLength = input.length;",
+					"    let diff = stringLength % segmentLength;",
+					"",
+					"    if (!diff) {",
+					"        return input;",
+					"    }",
+					"",
+					"    let position = stringLength;",
+					"    let padLength = segmentLength - diff;",
+					"    let paddedStringLength = stringLength + padLength;",
+					"    let buffer = new Buffer(paddedStringLength);",
+					"",
+					"    buffer.write(input);",
+					"",
+					"    while (padLength--) {",
+					"        buffer.write(\"=\", position++);",
+					"    }",
+					"",
+					"    return buffer.toString();",
+					"}",
+					"",
+					"function decode(base64url, encoding = \"utf8\") {",
+					"    return new Buffer(toBase64(base64url), \"base64\").toString(encoding);",
+					"}",
+					"",
+					"function toBase64(base64url) {",
+					"    base64url = base64url.toString();",
+					"    return padString(base64url)",
+					"        .replace(/\\-/g, \"+\")",
+					"        .replace(/_/g, \"/\");",
+					"}",
+					"",
+					"function payloadFromJWS(jwsSig, encoding) {",
+					"    encoding = encoding || 'utf8';",
+					"    var payload = jwsSig.split('.')[1];",
+					"    return decode(payload, encoding);",
+					"}",
+					"",
+					"function jwsDecode(jwsSig) {",
+					"    try {",
+					"        var payload = payloadFromJWS(jwsSig);",
+					"        return JSON.parse(payload);",
+					"",
+					"    } catch (error) {",
+					"        return null;",
+					"    }",
+					"}",
+					"",
+					"function isTokenExpired(parsed) {",
+					"    try {",
+					"        return ((Date.now() / 1000) > parsed.exp);",
+					"    } catch (error) {",
+					"        return true;",
+					"    }",
+					"}",
+					"",
+					"function GetAccessToken(tokenUri, accessTokenVarName) {",
+					"    pm.sendRequest({",
+					"        url: tokenUri,",
+					"        method: 'POST',",
+					"        body: {",
+					"          mode: 'urlencoded',",
+					"          urlencoded: [",
+					"            {key: \"grant_type\", value: \"client_credentials\", disabled: false},",
+					"            {key: \"scope\", value: \"rsts:sts:primaryproviderid:certificate\", disabled: false}",
+					"        ]",
+					"        }",
+					"    }, function (err, res) {",
+					"        var accessToken = res.json().access_token;",
+					"        ",
+					"        //console.log(\"Access Token: \" + token);",
+					"        pm.collectionVariables.set(accessTokenVarName, accessToken);",
+					"",
+					"        //console.log(res);",
+					"    }); ",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "SafeguardUri",
+			"value": "https://customer-asrtest18.westus.cloudapp.azure.com"
+		},
+		{
+			"key": "sppAccessToken",
+			"value": ""
+		}
+	]
+}
