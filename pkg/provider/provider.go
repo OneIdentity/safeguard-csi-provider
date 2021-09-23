@@ -111,8 +111,8 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 	return files, objectVersionMap, nil
 }
 
-func (p *Provider) GetA2aRegistrations(sgHost string, accessToken string, cert tls.Certificate) ([]*A2ARegistration, error) {
-	resp, err := p.SendGetRequest(sgHost, "/service/core/v3/A2ARegistrations", nil, cert, &accessToken, nil)
+func (p *Provider) GetA2aRegistrations(sgHost string, accessToken *OAuth2AccessToken, cert tls.Certificate) ([]*A2ARegistration, error) {
+	resp, err := p.SendGetRequest(sgHost, "/service/core/v3/A2ARegistrations", nil, cert, &accessToken.AccessToken, nil)
 	if err != nil {
 		klog.Error(err)
 		return nil, err
@@ -128,8 +128,8 @@ func (p *Provider) GetA2aRegistrations(sgHost string, accessToken string, cert t
 	return registrations, nil
 }
 
-func (p *Provider) GetRetrievableAccounts(sgHost string, reg *A2ARegistration, accessToken string, cert tls.Certificate) ([]*RetrievableAccount, error) {
-	resp, err := p.SendGetRequest(sgHost, fmt.Sprintf("/service/core/v3/A2ARegistrations/%s/RetrievableAccounts", strconv.Itoa(reg.Id)), nil, cert, &accessToken, nil)
+func (p *Provider) GetRetrievableAccounts(sgHost string, reg *A2ARegistration, accessToken *OAuth2AccessToken, cert tls.Certificate) ([]*RetrievableAccount, error) {
+	resp, err := p.SendGetRequest(sgHost, fmt.Sprintf("/service/core/v3/A2ARegistrations/%s/RetrievableAccounts", strconv.Itoa(reg.Id)), nil, cert, &accessToken.AccessToken, nil)
 	if err != nil {
 		klog.Error(err)
 		return nil, err
@@ -205,11 +205,11 @@ func (p *Provider) SendGetRequest(sgHost string, path string, params map[string]
 	return resp, err
 }
 
-func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (string, error){
+func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (*OAuth2AccessToken, error){
 	url, err := url.Parse(sgHost)
 	if err != nil {
 		klog.Error(err)
-		return "", err
+		return nil, err
 	}
 
 	url.Path = "/RSTS/oauth2/token"
@@ -219,24 +219,28 @@ func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (string, error)
 	req, err := http.NewRequest("POST", url.String(), bytes.NewBuffer(jsonData))
 	if err != nil {
 		klog.Error(err)
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.SendRequest(req, cert)
 	if err != nil {
 		klog.Error(err)
-		return "", err
+		return nil, err
 	}
 
 	defer resp.Body.Close()
-	tr := p.DeserializeJsonToMap(resp)
+	// tr := p.DeserializeJsonToMap(resp)
 
-	if val, ok := tr["access_token"]; ok {
-		return fmt.Sprintf("%v", val), nil
+	if resp.StatusCode == http.StatusOK {
+
+		var accessToken *OAuth2AccessToken
+		json.NewDecoder(resp.Body).Decode(&accessToken)
+
+		return accessToken, nil
 	}
 
-	return "", errors.New("access_token didn't exist in returned payload")
+	return nil, errors.New("access_token didn't exist in returned payload")
 }
 
 func (p *Provider) DeserializeJsonToMap(resp *http.Response) map[string]interface{} {

@@ -1,6 +1,8 @@
 package provider
 
-import "google.golang.org/genproto/googleapis/type/datetime"
+import (
+	"google.golang.org/genproto/googleapis/type/datetime"
+)
 
 type A2ARegistration struct {
 	Id                        int
@@ -29,4 +31,12 @@ type RetrievableAccount struct {
 	AccountDisabled    int
 	AccountType        string
 	DomainName         string
+}
+
+type OAuth2AccessToken struct {
+	AccessToken		   string `json:"access_token"`
+	ExpiresIn		   int    `json:"expires_in"`
+	Scope		       string
+	Success            bool
+	TokenType          string `json:"token_type"`
 }
