@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"io/ioutil"
 	"net/http"
@@ -230,17 +229,22 @@ func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (*OAuth2AccessT
 	}
 
 	defer resp.Body.Close()
-	// tr := p.DeserializeJsonToMap(resp)
 
 	if resp.StatusCode == http.StatusOK {
-
+		// TODO: Error handling?
 		var accessToken *OAuth2AccessToken
 		json.NewDecoder(resp.Body).Decode(&accessToken)
+
+		if strings.TrimSpace(accessToken.AccessToken) == "" || !accessToken.Success {
+			klog.Errorf("No access token was found. AccessToken response had a status of %t", accessToken.Success)
+			return nil, fmt.Errorf("could not retrieve access token")
+		}
 
 		return accessToken, nil
 	}
 
-	return nil, errors.New("access_token didn't exist in returned payload")
+	klog.Errorf("Request failed with status code %d", resp.StatusCode)
+	return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
 }
 
 func (p *Provider) DeserializeJsonToMap(resp *http.Response) map[string]interface{} {
