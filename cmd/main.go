@@ -25,7 +25,7 @@ import (
 
 var (
 	versionInfo   = flag.Bool("version", false, "prints the version information")
-	endpoint      = flag.String("endpoint", "unix:///tmp/azure.sock", "CSI gRPC endpoint")
+	endpoint      = flag.String("endpoint", "unix:///tmp/safeguard.sock", "CSI gRPC endpoint")
 	logFormatJSON = flag.Bool("log-format-json", false, "set log formatter to json")
 
 	healthzPort    = flag.Int("healthz-port", 8989, "port for health check")

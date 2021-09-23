@@ -6,10 +6,10 @@ PROJECT_NAME := safeguard-csi-provider
 REPO_PATH="$(ORG_PATH)/$(PROJECT_NAME)"
 
 REGISTRY_NAME ?= starlingdev
-REPO_PREFIX ?= oneidentity/safeguard/secrets-csi-provider
+REPO_PREFIX ?= oneidentity/secrets-store
 REGISTRY ?= $(REGISTRY_NAME).azurecr.io/$(REPO_PREFIX)
 IMAGE_VERSION ?= v0.2.0
-IMAGE_NAME ?= provider-azure
+IMAGE_NAME ?= provider-safeguard
 IMAGE_TAG := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_VERSION)
 
 # build variables

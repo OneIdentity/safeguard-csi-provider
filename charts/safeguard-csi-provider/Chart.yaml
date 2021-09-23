@@ -1,17 +1,14 @@
 apiVersion: v2
 name: safeguard-csi-provider
-version: 0.2.1
+version: 0.2.0
 appVersion: 0.2.0
 kubeVersion: ">=1.16.0-0"
-description: A Helm chart to install the Secrets Store CSI Driver and the Azure Keyvault Provider inside a Kubernetes cluster.
+description: A Helm chart to install the Secrets Store CSI Driver inside a Kubernetes cluster.
 sources:
   - https://github.com/OneIdentity/safeguard-csi-provider
 home: https://github.com/OneIdentity/safeguard-csi-provider
 maintainers:
-  - name: Anish Ramasekar
-    email: anish.ramasekar@gmail.com
-dependencies:
-- name: secrets-store-csi-driver
-  repository: https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
-  version: 0.3.0
-  condition: secrets-store-csi-driver.install
+  - name: Dane Barentine
+    email: dane.barentine@oneidentity.com
+  - name: Andy Holloway
+    email: andy.holloway@oneidentity.com

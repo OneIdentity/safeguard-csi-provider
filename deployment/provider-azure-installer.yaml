@@ -23,16 +23,14 @@ spec:
       serviceAccountName: safeguard-csi-provider
       hostNetwork: true
       containers:
-        - name: provider-azure-installer
-          image: mcr.microsoft.com/oss/azure/secrets-store/provider-azure:v0.2.0
+        - name: provider-safeguard-installer
+          image: starlingdev.azurecr.io/oneidentity/secrets-store/provider-safeguard:v0.2.0
           imagePullPolicy: IfNotPresent
           args:
-            - --endpoint=unix:///provider/azure.sock
-            - --construct-pem-chain=true
+            - --endpoint=unix:///provider/safeguard.sock
             - --healthz-port=8989
             - --healthz-path=/healthz
             - --healthz-timeout=5s
-            - --driver-write-secrets=true
           livenessProbe:
             httpGet:
               path: /healthz
