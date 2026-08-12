@@ -68,14 +68,43 @@ Layer 2 must run **on a Linux host** because it drives `k3s`, `kubectl`, and
 Prerequisites on the Linux host / WSL2:
 
 - `k3s` (the harness starts `k3s server` directly; WSL2 needs no systemd)
-- `kubectl` and `helm` on `PATH`
-- A container builder (`docker` or `nerdctl`) to build and import the provider
-  image into k3s via `k3s ctr images import`
+- `kubectl` and `helm` on `PATH` (k3s ships `kubectl`/`ctr`)
+- [`ko`](https://ko.build) to cross-build and import the provider image into k3s
+  without a Docker daemon
+- Root: `k3s` and the provider DaemonSet require it
+
+The two responsibilities are split. `test/e2e/setup.sh` brings up the
+infrastructure (k3s + the provider image + the Secrets Store CSI Driver + this
+provider's DaemonSet) and is idempotent. The Go test only creates the per-run
+objects (namespace, `SecretProviderClass`, consumer pod), asserts the mounted
+file, and tears them down; it preflights that `setup.sh` has already run.
 
 ```bash
-# same SAFEGUARD_* exports as Layer 0, then:
-go test -tags e2e -v ./test/e2e/...
+sudo test/e2e/setup.sh                 # once; safe to re-run
+
+# same SAFEGUARD_* exports as Layer 0, plus KUBECONFIG, then:
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+sudo -E env "PATH=$PATH" go test -tags e2e -v -timeout 900s ./test/e2e/...
 ```
+
+### WSL2 networking
+
+The k3s node and the provider pod must reach the appliance directly. When the
+appliance lives on a host-only / lab network that WSL2's default NAT cannot
+route to, switch WSL2 to **mirrored** networking so it shares the Windows host's
+interfaces and routes. Put this in `%USERPROFILE%\.wslconfig` and run
+`wsl --shutdown`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Mirrored mode may reflect only the lab interface without a default route (which
+k3s needs for its node IP and pods need for egress). `setup.sh` detects this and
+adds a default route via the lab link's gateway, and starts k3s with an explicit
+`--node-ip`/`--flannel-iface`. Override the auto-detection with `E2E_NODE_IP`,
+`E2E_FLANNEL_IFACE`, or `E2E_DEFAULT_GATEWAY` if your topology differs.
 
 ## Cleanup and debugging
 
