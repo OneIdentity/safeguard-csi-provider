@@ -97,3 +97,9 @@ The provider tracks a released tag of `safeguard-go`. When bumping it, update
 1. Update [`CHANGELOG.md`](../CHANGELOG.md).
 2. Bump `IMAGE_VERSION` in the `Makefile` (and chart `values.yaml` if pinned).
 3. Tag the release and build/push images with `make container-all push-manifest`.
+
+> **Planned:** release automation will move to a tag-triggered GitHub Actions
+> workflow driven by [goreleaser](https://goreleaser.com/) — producing GitHub
+> Releases (checksums, SBOM, changelog) and Linux `amd64`/`arm64` images plus a
+> manifest. The Windows nanoserver multi-version images may continue to use
+> `buildx` until the goreleaser manifest path is validated for them.
