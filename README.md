@@ -29,6 +29,20 @@ flowchart LR
 4. Each credential is written to the pod's mount as a file named after the
    account.
 
+## Documentation
+
+| Guide | Description |
+| --- | --- |
+| [Installation](./docs/installation.md) | Install the driver and provider; flags and compatibility. |
+| [Safeguard A2A setup](./docs/safeguard-setup.md) | Configure the A2A registration and client certificate in Safeguard. |
+| [Configuration reference](./docs/configuration.md) | Every `SecretProviderClass` parameter and the auth model. |
+| [Usage](./docs/usage.md) | Mount secrets, sync to Kubernetes Secrets, retrieve keys/API keys. |
+| [Troubleshooting](./docs/troubleshooting.md) | Common errors, logging, rotation behavior. |
+| [Development](./docs/development.md) | Build, test, container, and release. |
+| [Changelog](./CHANGELOG.md) | Notable changes. |
+
+The sections below are a quick reference; the guides above go deeper.
+
 ## SecretProviderClass attributes
 
 | Attribute | Required | Default | Description |
