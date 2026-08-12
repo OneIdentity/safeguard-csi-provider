@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: safeguard-demo
+spec:
+  containers:
+    - name: demo
+      image: registry.k8s.io/e2e-test-images/busybox:1.29-4
+      command: ["/bin/sh", "-c", "cat /mnt/secrets/* && sleep 3600"]
+      volumeMounts:
+        - name: secrets
+          mountPath: /mnt/secrets
+          readOnly: true
+  volumes:
+    - name: secrets
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: safeguard
+        # References the Kubernetes Secret holding the A2A client certificate
+        # and key. Create it with:
+        #   kubectl create secret generic safeguard-a2a \
+        #     --from-file=clientCertificate=clientCertificate.pem \
+        #     --from-file=clientKey=clientKey.pem
+        #   kubectl label secret safeguard-a2a secrets-store.csi.k8s.io/used=true
+        nodePublishSecretRef:
+          name: safeguard-a2a

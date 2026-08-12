@@ -1,29 +1,26 @@
 package provider
 
 import (
-	"bytes"
-	"crypto/tls"
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"golang.org/x/net/context"
-	"io/ioutil"
-	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 
+	safeguard "github.com/OneIdentity/safeguard-go"
+	"github.com/google/uuid"
 	"k8s.io/klog/v2"
 )
 
+// Provider retrieves secrets from Safeguard for Privileged Passwords over the
+// Application-to-Application (A2A) service using the safeguard-go SDK.
 type Provider struct {
 }
 
 // NewProvider creates a new provider
 func NewProvider() *Provider {
-	return &Provider{
-	}
+	return &Provider{}
 }
 
 // MountSecretsStoreObjectContent mounts content of the secrets store object to target path
@@ -36,50 +33,25 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 	podName := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.name"])
 	podNamespace := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.namespace"])
 
-	var clientCertificate, clientKey []byte
-
-	for k, v := range secrets {
-		switch k {
-		case "clientCertificate":
-			clientCertificate = []byte(v)
-		case "clientKey":
-			clientKey = []byte(v)
-		}
-	}
-
-	cert, err := tls.X509KeyPair(clientCertificate, clientKey)
+	objectType, keyFormat, err := parseObjectType(attrib)
 	if err != nil {
 		klog.Error(err)
 		return files, objectVersionMap, err
 	}
 
-	// Get bearer token
-	accessToken, err := p.GetToken(sgHost, cert)
+	clientCertificate := []byte(secrets["clientCertificate"])
+	clientKey := []byte(secrets["clientKey"])
+
+	a2a, err := newA2AContext(sgHost, attrib, clientCertificate, clientKey)
 	if err != nil {
 		klog.Error(err)
 		return files, objectVersionMap, err
 	}
+	defer func() { _ = a2a.Close() }()
 
-	// Get the A2A registrations for this client certificate
-	registrations, err := p.GetA2aRegistrations(sgHost, accessToken, cert)
-	if err != nil {
-		klog.Error(err)
-		return files, objectVersionMap, err
-	}
-
-	if len(registrations) == 0 {
-		klog.Error("No app registrations were found")
-		return files, objectVersionMap, fmt.Errorf("no app registrations were round")
-	}
-
-	appRegistration := Find(registrations, appName)
-	if appRegistration == nil {
-		klog.Errorf("Requested app name %s was not found", appName)
-		return files, objectVersionMap, fmt.Errorf("requested app name %s was not found", appName)
-	}
-
-	// Get retrievable accounts for this registration
-	accounts, err := p.GetRetrievableAccounts(sgHost, appRegistration, accessToken, cert)
+	// Enumerate every account this client certificate is registered to retrieve,
+	// across all A2A registrations, each carrying its own per-account API key.
+	accounts, err := a2a.GetRetrievableAccounts(ctx, "")
 	if err != nil {
 		klog.Error(err)
 		return files, objectVersionMap, err
@@ -87,186 +59,181 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 
 	if len(accounts) == 0 {
 		klog.Warning("No accounts were found")
-		return files, objectVersionMap, err
 	}
 
-	// Get each account credential and map into data being returned to driver
+	// Filter to the requested application registration when appName is supplied.
+	// An empty appName retrieves every account the certificate can access.
+	matched := 0
 	for _, account := range accounts {
+		if appName != "" && account.ApplicationName != appName {
+			continue
+		}
+		matched++
+
 		klog.Infof("Looking up %s", account.AccountName)
 
-		cred, err := p.GetCredential(sgHost, account, cert)
+		cred, err := retrieveCredential(ctx, a2a, account, objectType, keyFormat)
 		if err != nil {
 			klog.Errorf("Could not fetch secret %s because %s", account.AccountName, err.Error())
 			continue
 		}
 
 		// TODO: We should figure out how to grab a proper version
-		objectVersionMap[strconv.Itoa(account.AccountId)] = uuid.New().String()
+		objectVersionMap[strconv.Itoa(account.AccountID)] = uuid.New().String()
 		files[account.AccountName] = cred
 
 		klog.InfoS("added file to the gRPC response", "file", account.AccountName, "pod", klog.ObjectRef{Namespace: podNamespace, Name: podName})
 	}
 
+	if appName != "" && matched == 0 {
+		klog.Errorf("Requested app name %s had no retrievable accounts", appName)
+		return files, objectVersionMap, fmt.Errorf("requested app name %s had no retrievable accounts", appName)
+	}
+
 	return files, objectVersionMap, nil
 }
 
-func (p *Provider) GetA2aRegistrations(sgHost string, accessToken *OAuth2AccessToken, cert tls.Certificate) ([]*A2ARegistration, error) {
-	resp, err := p.SendGetRequest(sgHost, "/service/core/v3/A2ARegistrations", nil, cert, &accessToken.AccessToken, nil)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	} else if resp.StatusCode != http.StatusOK {
-		klog.Errorf("Request failed with status code %d", resp.StatusCode)
-		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
+// newA2AContext builds an A2AContext from the client certificate and optional
+// appliance-trust attributes. The certificate and key are supplied as separate
+// PEM inputs, mirroring the clientCertificate/clientKey node-publish secrets.
+func newA2AContext(sgHost string, attrib map[string]string, clientCertificate, clientKey []byte) (*safeguard.A2AContext, error) {
+	opts := []safeguard.A2AOption{
+		safeguard.WithA2APrivateKeyPEM(clientKey),
 	}
 
-	defer resp.Body.Close()
-	// TODO: Error handling?
-	var registrations []*A2ARegistration
-	json.NewDecoder(resp.Body).Decode(&registrations)
-	return registrations, nil
+	connOpts, err := connectionOptions(attrib)
+	if err != nil {
+		return nil, err
+	}
+	if len(connOpts) > 0 {
+		opts = append(opts, safeguard.WithA2AConnectionOptions(connOpts...))
+	}
+
+	return safeguard.NewA2AContext(sgHost, clientCertificate, safeguard.Secret{}, opts...)
 }
 
-func (p *Provider) GetRetrievableAccounts(sgHost string, reg *A2ARegistration, accessToken *OAuth2AccessToken, cert tls.Certificate) ([]*RetrievableAccount, error) {
-	resp, err := p.SendGetRequest(sgHost, fmt.Sprintf("/service/core/v3/A2ARegistrations/%s/RetrievableAccounts", strconv.Itoa(reg.Id)), nil, cert, &accessToken.AccessToken, nil)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	} else if resp.StatusCode != http.StatusOK {
-		klog.Errorf("Request failed with status code %d", resp.StatusCode)
-		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
+// connectionOptions translates the optional appliance-trust attributes into SDK
+// connection options. safeguardCaBundle supplies a PEM CA bundle to trust a
+// privately issued appliance certificate; insecureSkipVerify disables appliance
+// certificate verification entirely and is intended only for bootstrapping.
+func connectionOptions(attrib map[string]string) ([]safeguard.Option, error) {
+	var connOpts []safeguard.Option
+
+	if caBundle := strings.TrimSpace(attrib["safeguardCaBundle"]); caBundle != "" {
+		connOpts = append(connOpts, safeguard.WithCABundle([]byte(caBundle)))
 	}
 
-	defer resp.Body.Close()
-	// TODO: Error handling?
-	var accounts []*RetrievableAccount
-	json.NewDecoder(resp.Body).Decode(&accounts)
-	return accounts, nil
-}
-
-func (p *Provider) GetCredential(sgHost string, account *RetrievableAccount, cert tls.Certificate) ([]byte, error) {
-	params := make(map[string]string)
-	params["type"] = "Password"
-
-	resp, err := p.SendGetRequest(sgHost, "/service/a2a/v3/Credentials", params, cert, nil, &account.ApiKey)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	} else if resp.StatusCode != http.StatusOK {
-		klog.Errorf("Request failed with status code %d", resp.StatusCode)
-		return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
-	}
-
-	defer resp.Body.Close()
-
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-	return bodyBytes, nil
-}
-
-func (p *Provider) SendGetRequest(sgHost string, path string, params map[string]string, cert tls.Certificate, accessToken *string, apiKey *string) (*http.Response, error){
-	url, err := url.Parse(sgHost)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-
-	url.Path = path
-
-	if params != nil {
-		for key, value := range params {
-			url.Query().Set(key, value)
+	if raw := strings.TrimSpace(attrib["insecureSkipVerify"]); raw != "" {
+		insecure, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid insecureSkipVerify value %q: %w", raw, err)
+		}
+		if insecure {
+			klog.Warning("insecureSkipVerify is enabled; the Safeguard appliance certificate will NOT be verified")
+			connOpts = append(connOpts, safeguard.WithInsecureTLS())
 		}
 	}
 
-	req, err := http.NewRequest("GET", url.String(), nil)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-
-	if accessToken != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *accessToken))
-	} else if apiKey != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("A2A %s", *apiKey))
-
-	}
-
-	resp, err := p.SendRequest(req, cert)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-
-	return resp, err
+	return connOpts, nil
 }
 
-func (p *Provider) GetToken(sgHost string, cert tls.Certificate) (*OAuth2AccessToken, error){
-	url, err := url.Parse(sgHost)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
+// parseObjectType resolves the optional objectType attribute (defaulting to
+// Password) and, for private keys, the optional keyFormat attribute.
+func parseObjectType(attrib map[string]string) (string, safeguard.KeyFormat, error) {
+	objectType := strings.TrimSpace(attrib["objectType"])
+	if objectType == "" {
+		objectType = "Password"
 	}
 
-	url.Path = "/RSTS/oauth2/token"
-	values := map[string]string{"grant_type": "client_credentials", "scope": "rsts:sts:primaryproviderid:certificate"}
-	jsonData, err := json.Marshal(values)
-
-	req, err := http.NewRequest("POST", url.String(), bytes.NewBuffer(jsonData))
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.SendRequest(req, cert)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
+	switch strings.ToLower(objectType) {
+	case "password":
+		objectType = "Password"
+	case "privatekey":
+		objectType = "PrivateKey"
+	case "apikey":
+		objectType = "ApiKey"
+	default:
+		return "", "", fmt.Errorf("unsupported objectType %q (expected Password, PrivateKey, or ApiKey)", objectType)
 	}
 
-	defer resp.Body.Close()
+	keyFormat, err := parseKeyFormat(attrib["keyFormat"])
+	if err != nil {
+		return "", "", err
+	}
 
-	if resp.StatusCode == http.StatusOK {
-		// TODO: Error handling?
-		var accessToken *OAuth2AccessToken
-		json.NewDecoder(resp.Body).Decode(&accessToken)
+	return objectType, keyFormat, nil
+}
 
-		if strings.TrimSpace(accessToken.AccessToken) == "" || !accessToken.Success {
-			klog.Errorf("No access token was found. AccessToken response had a status of %t", accessToken.Success)
-			return nil, fmt.Errorf("could not retrieve access token")
+// parseKeyFormat resolves the optional keyFormat attribute used when retrieving
+// SSH private keys. An empty value lets the SDK default to OpenSSH.
+func parseKeyFormat(raw string) (safeguard.KeyFormat, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "", nil
+	case "openssh":
+		return safeguard.KeyFormatOpenSSH, nil
+	case "ssh2":
+		return safeguard.KeyFormatSSH2, nil
+	case "putty":
+		return safeguard.KeyFormatPuTTY, nil
+	default:
+		return "", fmt.Errorf("unsupported keyFormat %q (expected OpenSsh, Ssh2, or Putty)", raw)
+	}
+}
+
+// retrieveCredential fetches the credential for a single account in the requested
+// format and returns the plaintext bytes to write to the pod mount.
+func retrieveCredential(ctx context.Context, a2a *safeguard.A2AContext, account safeguard.A2ARetrievableAccount, objectType string, keyFormat safeguard.KeyFormat) ([]byte, error) {
+	switch objectType {
+	case "Password":
+		secret, err := a2a.RetrievePassword(ctx, account.APIKey)
+		if err != nil {
+			return nil, err
 		}
+		return secret.Expose(), nil
+	case "PrivateKey":
+		secret, err := a2a.RetrievePrivateKey(ctx, account.APIKey, keyFormat)
+		if err != nil {
+			return nil, err
+		}
+		return secret.Expose(), nil
+	case "ApiKey":
+		return retrieveAPIKeySecret(ctx, a2a, account.APIKey)
+	default:
+		return nil, fmt.Errorf("unsupported objectType %q", objectType)
+	}
+}
 
-		return accessToken, nil
+// retrieveAPIKeySecret fetches the API key credentials for an account and
+// serializes them as JSON, exposing the client secret so it can be written to
+// the pod mount. The SDK redacts Secret values when marshaled directly, so the
+// exposed value is copied into a plain struct here.
+func retrieveAPIKeySecret(ctx context.Context, a2a *safeguard.A2AContext, apiKey safeguard.Secret) ([]byte, error) {
+	keys, err := a2a.RetrieveAPIKey(ctx, apiKey)
+	if err != nil {
+		return nil, err
 	}
 
-	klog.Errorf("Request failed with status code %d", resp.StatusCode)
-	return nil, fmt.Errorf("request failed with status code %d", resp.StatusCode)
-}
-
-func (p *Provider) DeserializeJsonToMap(resp *http.Response) map[string]interface{} {
-	// TODO: Error handling?
-	var res map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&res)
-	klog.Info(res)
-
-	return res
-}
-
-func (p *Provider) GetTlsTransport(cert tls.Certificate) *http.Transport {
-	tlsConfig := &tls.Config{
-		Renegotiation: tls.RenegotiateFreelyAsClient,
-		Certificates: []tls.Certificate{cert},
+	type apiKeyJSON struct {
+		ID             int    `json:"id"`
+		Name           string `json:"name"`
+		Description    string `json:"description"`
+		ClientID       string `json:"clientId"`
+		ClientSecret   string `json:"clientSecret"`
+		ClientSecretID string `json:"clientSecretId"`
 	}
 
-	return &http.Transport{TLSClientConfig: tlsConfig}
-}
+	out := make([]apiKeyJSON, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, apiKeyJSON{
+			ID:             k.ID,
+			Name:           k.Name,
+			Description:    k.Description,
+			ClientID:       k.ClientID,
+			ClientSecret:   k.ClientSecret.ExposeString(),
+			ClientSecretID: k.ClientSecretID,
+		})
+	}
 
-func (p *Provider) SendRequest(req *http.Request, cert tls.Certificate) (*http.Response, error){
-	transport := p.GetTlsTransport(cert)
-	client := &http.Client{Transport: transport}
-	return client.Do(req)
+	return json.Marshal(out)
 }
