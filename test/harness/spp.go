@@ -3,10 +3,25 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	safeguard "github.com/OneIdentity/safeguard-go"
 )
+
+// annotate enriches an SDK request error with the appliance's full response
+// body. The SDK's APIError.Error() reports only the status and a generic code;
+// the RawBody carries Safeguard's detailed validation messages, which are what
+// actually explain a 400.
+func annotate(what string, err error) error {
+	var apiErr *safeguard.APIError
+	if errors.As(err, &apiErr) {
+		if body := apiErr.RawBody(); len(body) > 0 {
+			return fmt.Errorf("%s: %w: %s", what, err, string(body))
+		}
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
 
 // SPP wraps an authenticated Safeguard core-API client and tracks the objects a
 // run creates so they can be torn down in reverse order. Provisioning methods
@@ -47,7 +62,7 @@ func (s *SPP) Client() *safeguard.Client { return s.client }
 func (s *SPP) getJSON(ctx context.Context, relURL string, out any, opts ...safeguard.ReqOption) error {
 	resp, err := s.client.Get(ctx, safeguard.Core, relURL, opts...)
 	if err != nil {
-		return fmt.Errorf("GET %s: %w", relURL, err)
+		return annotate(fmt.Sprintf("GET %s", relURL), err)
 	}
 	return decodeInto(fmt.Sprintf("GET %s", relURL), resp, out)
 }
@@ -57,7 +72,7 @@ func (s *SPP) getJSON(ctx context.Context, relURL string, out any, opts ...safeg
 func (s *SPP) postJSON(ctx context.Context, relURL string, body, out any, opts ...safeguard.ReqOption) error {
 	resp, err := s.client.Post(ctx, safeguard.Core, relURL, body, opts...)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", relURL, err)
+		return annotate(fmt.Sprintf("POST %s", relURL), err)
 	}
 	return decodeInto(fmt.Sprintf("POST %s", relURL), resp, out)
 }
@@ -67,7 +82,7 @@ func (s *SPP) postJSON(ctx context.Context, relURL string, body, out any, opts .
 func (s *SPP) putJSON(ctx context.Context, relURL string, body, out any, opts ...safeguard.ReqOption) error {
 	resp, err := s.client.Put(ctx, safeguard.Core, relURL, body, opts...)
 	if err != nil {
-		return fmt.Errorf("PUT %s: %w", relURL, err)
+		return annotate(fmt.Sprintf("PUT %s", relURL), err)
 	}
 	return decodeInto(fmt.Sprintf("PUT %s", relURL), resp, out)
 }
@@ -78,7 +93,7 @@ func (s *SPP) putJSON(ctx context.Context, relURL string, body, out any, opts ..
 func (s *SPP) delete(ctx context.Context, relURL string) error {
 	resp, err := s.client.Delete(ctx, safeguard.Core, relURL)
 	if err != nil {
-		return fmt.Errorf("DELETE %s: %w", relURL, err)
+		return annotate(fmt.Sprintf("DELETE %s", relURL), err)
 	}
 	if resp.StatusCode == 404 {
 		return nil

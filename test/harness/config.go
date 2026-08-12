@@ -110,8 +110,10 @@ func (c *Config) TLSOptions() []safeguard.Option {
 }
 
 // BootstrapCredential builds the SDK credential for the bootstrap administrator.
+// It uses the PKCE headless flow rather than the Resource Owner Grant, which
+// Safeguard appliances commonly disable.
 func (c *Config) BootstrapCredential() safeguard.Credential {
-	return safeguard.UsernamePassword(
+	return safeguard.PKCEHeadless(
 		c.BootstrapProvider,
 		c.BootstrapUser,
 		safeguard.NewSecretString(c.BootstrapPassword),

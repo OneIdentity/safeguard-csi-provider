@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	safeguard "github.com/OneIdentity/safeguard-go"
 	"github.com/OneIdentity/safeguard-csi-provider/test/harness"
+	safeguard "github.com/OneIdentity/safeguard-go"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -86,11 +86,18 @@ func TestA2ARetrieval(t *testing.T) {
 		if err != nil {
 			t.Fatalf("retrieving API key: %v", err)
 		}
-		if len(keys) == 0 {
-			t.Fatalf("expected at least one API key, got none")
+		var got *safeguard.APIKey
+		for i := range keys {
+			if keys[i].ClientID == fixture.ExpectedClientID {
+				got = &keys[i]
+				break
+			}
 		}
-		if keys[0].ClientID == "" {
-			t.Fatalf("retrieved API key has an empty client identifier")
+		if got == nil {
+			t.Fatalf("no retrieved API key matched client id %q (got %d keys)", fixture.ExpectedClientID, len(keys))
+		}
+		if got.ClientSecret.ExposeString() != fixture.ExpectedClientSecret {
+			t.Fatalf("retrieved API key secret does not match the provisioned value")
 		}
 	})
 }

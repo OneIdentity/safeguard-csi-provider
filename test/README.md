@@ -27,8 +27,8 @@ build tag, so it compiles with the normal build but never runs on its own.
 
 1. Connect with the bootstrap administrator credential.
 2. Create a dedicated, run-scoped test administrator.
-3. Provision a dummy asset (the connectivity-free "Other" platform), an account
-   with a known password, an SSH key, and an API key credential.
+3. Provision a dummy asset (the connectivity-free "Other Managed" platform), an
+   account with a known password, an SSH key, and an API key credential.
 4. Generate a CA + client certificate, upload the CA as trusted, and create a
    certificate user mapped to the client-certificate thumbprint.
 5. Create an A2A registration exposing the account's password, SSH key, and API

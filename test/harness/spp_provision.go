@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 
@@ -37,6 +38,14 @@ type Fixture struct {
 	// ExpectedPublicKey is the OpenSSH authorized-keys line for the installed SSH
 	// key, so a test can confirm the retrieved private key matches this public key.
 	ExpectedPublicKey string
+
+	// ExpectedClientID is the OAuth client identifier stored on the account's API
+	// key, so a test can assert the retrieved API key matches exactly.
+	ExpectedClientID string
+
+	// ExpectedClientSecret is the OAuth client secret stored on the account's API
+	// key.
+	ExpectedClientSecret string
 }
 
 // AdminRoles are the least-privilege administrative roles the dedicated test
@@ -53,8 +62,8 @@ var AdminRoles = []string{"AssetAdmin", "UserAdmin", "PolicyAdmin", "ApplianceAd
 // Flow:
 //  1. bootstrap: create a dedicated least-privilege admin, set its password
 //  2. reconnect as that admin (all remaining objects are owned by it)
-//  3. create an asset (generic "Other" platform) and an account
-//  4. set the account password, install an SSH key, mint an API key
+//  3. create an asset ("Other Managed" platform) and an account
+//  4. set the account password, install an SSH key, mint an API key + secret
 //  5. upload the client CA as a trusted certificate
 //  6. create the certificate user bound to the client thumbprint
 //  7. create the A2A registration and add the account as retrievable
@@ -72,7 +81,7 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 	// If anything below fails, tear down whatever we managed to create so a
 	// failed run does not leave the appliance dirty.
 	var admin *SPP
-	teardown = func(ctx context.Context) {
+	doTeardown := func(ctx context.Context) {
 		if admin != nil {
 			_ = admin.Cleanup(ctx)
 			admin.Close(ctx)
@@ -80,23 +89,33 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 		_ = boot.Cleanup(ctx)
 		boot.Close(ctx)
 	}
+	// On any error, tear down whatever was created. Error returns below use
+	// `return nil, nil, err`, which would clobber a named teardown return, so the
+	// defer references the local closure instead.
 	defer func() {
 		if err != nil {
-			teardown(ctx)
-			teardown = nil
+			doTeardown(ctx)
 		}
 	}()
 
-	// Step 1: dedicated admin.
+	// Step 1: dedicated admin. A local user must name its authentication
+	// provider, so resolve the built-in Local provider first.
+	localProviderID, err := boot.localProviderID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	adminName := cfg.Name("admin")
 	adminPassword, err := randomPassword()
 	if err != nil {
 		return nil, nil, err
 	}
 	adminID, err := boot.createUser(ctx, map[string]any{
-		"Name":                      adminName,
-		"AdminRoles":                AdminRoles,
-		"ChangePasswordAtNextLogin": false,
+		"Name":       adminName,
+		"AdminRoles": AdminRoles,
+		"PrimaryAuthenticationProvider": map[string]any{
+			"Id":       localProviderID,
+			"Identity": adminName,
+		},
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating test admin: %w", err)
@@ -115,12 +134,16 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 	}
 
 	// Step 3: asset + account.
-	platformID, err := admin.otherPlatformID(ctx)
+	platformID, err := admin.managedPlatformID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	partitionID, err := admin.defaultPartitionID(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	assetName := cfg.Name("asset")
-	assetID, err := admin.createAsset(ctx, assetName, platformID)
+	assetID, err := admin.createAsset(ctx, assetName, platformID, partitionID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating asset: %w", err)
 	}
@@ -152,8 +175,17 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 	if err = admin.installSSHKey(ctx, accountID, privatePEM); err != nil {
 		return nil, nil, fmt.Errorf("installing account SSH key: %w", err)
 	}
-	if err = admin.createAPIKey(ctx, accountID, cfg.Name("apikey")); err != nil {
+	apiKey, err := admin.createAPIKey(ctx, accountID, cfg.Name("apikey"))
+	if err != nil {
 		return nil, nil, fmt.Errorf("creating account API key: %w", err)
+	}
+	apiKeyClientID := cfg.Name("apikey-client")
+	apiKeyClientSecret, err := randomPassword()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = admin.setAPIKeySecret(ctx, accountID, apiKey.Id, apiKeyClientID, apiKeyClientSecret); err != nil {
+		return nil, nil, fmt.Errorf("setting account API key secret: %w", err)
 	}
 
 	// Step 5: trust the client CA.
@@ -199,18 +231,22 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 	}
 
 	fixture = &Fixture{
-		AppName:           appName,
-		PKI:               pki,
-		AccountName:       accountName,
-		ExpectedPassword:  accountPassword,
-		ExpectedPublicKey: publicAuthorizedKey,
+		AppName:              appName,
+		PKI:                  pki,
+		AccountName:          accountName,
+		ExpectedPassword:     accountPassword,
+		ExpectedPublicKey:    publicAuthorizedKey,
+		ExpectedClientID:     apiKeyClientID,
+		ExpectedClientSecret: apiKeyClientSecret,
 	}
-	return fixture, teardown, nil
+	return fixture, doTeardown, nil
 }
 
-// connectAs logs in as an arbitrary provider\user with a password credential.
+// connectAs logs in as an arbitrary provider\user with a password credential,
+// using the PKCE headless flow (Safeguard appliances commonly disable the
+// Resource Owner Grant that a plain password credential would use).
 func connectAs(ctx context.Context, cfg *Config, provider, user, password string) (*SPP, error) {
-	cred := safeguard.UsernamePassword(provider, user, safeguard.NewSecretString(password))
+	cred := safeguard.PKCEHeadless(provider, user, safeguard.NewSecretString(password))
 	client, err := safeguard.Connect(ctx, cfg.Host, cred, cfg.TLSOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s as %s\\%s: %w", cfg.Host, provider, user, err)
@@ -233,47 +269,72 @@ func (s *SPP) createUser(ctx context.Context, body map[string]any) (int, error) 
 }
 
 // setPassword sets a password at a Password sub-resource. The Safeguard schema
-// for these endpoints is a bare JSON string, so the password is sent as-is and
-// the SDK JSON-encodes it to a quoted string.
+// for these endpoints is a bare JSON string. The SDK sends a Go string body
+// verbatim (unquoted), so the password is JSON-encoded here and passed as a
+// json.RawMessage to produce a valid quoted JSON string on the wire.
 func (s *SPP) setPassword(ctx context.Context, relURL, password string) error {
-	return s.putJSON(ctx, relURL, password, nil)
+	body, err := json.Marshal(password)
+	if err != nil {
+		return fmt.Errorf("encoding password: %w", err)
+	}
+	return s.putJSON(ctx, relURL, json.RawMessage(body), nil)
 }
 
-// otherPlatformID finds the generic "Other" platform used for manually managed
-// assets that require no network connectivity.
-func (s *SPP) otherPlatformID(ctx context.Context) (int, error) {
+// managedPlatformID finds the system "Other Managed" platform: a manually
+// managed platform that requires no network connectivity yet supports the full
+// set of credential operations (password, SSH key, and API key). The plain
+// "Other" platform supports none of these operations, so API keys cannot be
+// stored on accounts that use it.
+func (s *SPP) managedPlatformID(ctx context.Context) (int, error) {
 	var platforms []struct {
 		Id           int    `json:"Id"`
 		Name         string `json:"Name"`
 		PlatformType string `json:"PlatformType"`
 	}
-	if err := s.getJSON(ctx, "Platforms", &platforms, safeguard.WithQueryParam("filter", "Name eq 'Other'")); err != nil {
+	if err := s.getJSON(ctx, "Platforms", &platforms, safeguard.WithQueryParam("filter", "Name eq 'Other Managed'")); err != nil {
 		return 0, fmt.Errorf("listing platforms: %w", err)
 	}
 	for _, p := range platforms {
-		if p.Name == "Other" {
+		if p.Name == "Other Managed" {
 			return p.Id, nil
 		}
 	}
 	if len(platforms) > 0 {
 		return platforms[0].Id, nil
 	}
-	return 0, fmt.Errorf("no platform named %q found", "Other")
+	return 0, fmt.Errorf("no platform named %q found", "Other Managed")
 }
 
 // createAsset creates a manually managed asset on the given platform and returns
 // its Id.
-func (s *SPP) createAsset(ctx context.Context, name string, platformID int) (int, error) {
+func (s *SPP) createAsset(ctx context.Context, name string, platformID, partitionID int) (int, error) {
 	body := map[string]any{
-		"Name":           name,
-		"PlatformId":     platformID,
-		"NetworkAddress": name + ".invalid",
+		"Name":             name,
+		"PlatformId":       platformID,
+		"AssetPartitionId": partitionID,
+		"NetworkAddress":   name + ".invalid",
 	}
 	var out idResponse
 	if err := s.postJSON(ctx, "Assets", body, &out); err != nil {
 		return 0, err
 	}
 	return out.Id, nil
+}
+
+// defaultPartitionID returns the Id of the first asset partition, which on a
+// standard appliance is the built-in default partition that holds manually
+// managed assets.
+func (s *SPP) defaultPartitionID(ctx context.Context) (int, error) {
+	var partitions []struct {
+		Id int `json:"Id"`
+	}
+	if err := s.getJSON(ctx, "AssetPartitions", &partitions); err != nil {
+		return 0, fmt.Errorf("listing asset partitions: %w", err)
+	}
+	if len(partitions) == 0 {
+		return 0, fmt.Errorf("no asset partitions found")
+	}
+	return partitions[0].Id, nil
 }
 
 // createAccount creates an asset account under the given asset and returns its Id.
@@ -290,22 +351,49 @@ func (s *SPP) createAccount(ctx context.Context, name string, assetID int) (int,
 }
 
 // installSSHKey stores an SSH private key on the account so it can be retrieved
-// over A2A.
+// over A2A. A manually managed account cannot have a key pushed to a target
+// host, so the key is stored directly via PUT .../SshKey rather than the
+// InstallSshKey operation.
 func (s *SPP) installSSHKey(ctx context.Context, accountID int, privateKeyPEM string) error {
 	body := map[string]any{
 		"PrivateKey": privateKeyPEM,
 		"KeyType":    "Rsa",
 	}
-	return s.postJSON(ctx, fmt.Sprintf("AssetAccounts/%d/InstallSshKey", accountID), map[string]any{
-		"SshKeyToInstall": body,
-	}, nil)
+	return s.putJSON(ctx, fmt.Sprintf("AssetAccounts/%d/SshKey", accountID), body, nil)
 }
 
-// createAPIKey mints an API key on the account. Safeguard generates the client
-// identifier and secret; the A2A RetrieveAPIKey call returns them at test time.
-func (s *SPP) createAPIKey(ctx context.Context, accountID int, name string) error {
-	body := map[string]any{"Name": name}
-	return s.postJSON(ctx, fmt.Sprintf("AssetAccounts/%d/ApiKeys", accountID), body, nil)
+// createAPIKey mints an API key on the account and returns it. A lifetime is set
+// so the key is not immediately expired. The client id and secret are stored
+// separately (see setAPIKeySecret).
+func (s *SPP) createAPIKey(ctx context.Context, accountID int, name string) (accountAPIKey, error) {
+	body := map[string]any{
+		"Name":           name,
+		"LifetimeInDays": 365,
+	}
+	var out accountAPIKey
+	if err := s.postJSON(ctx, fmt.Sprintf("AssetAccounts/%d/ApiKeys", accountID), body, &out); err != nil {
+		return accountAPIKey{}, err
+	}
+	return out, nil
+}
+
+// setAPIKeySecret manually stores the OAuth client id and secret for an API key.
+// This is the manual-account analogue of ChangeApiKey (which is a task-based
+// rotation that requires connectivity to a real target). Supplying both values
+// ourselves flips the key's HasSecret flag so A2A retrieval returns them.
+func (s *SPP) setAPIKeySecret(ctx context.Context, accountID, apiKeyID int, clientID, clientSecret string) error {
+	body := map[string]any{
+		"ClientId":     clientID,
+		"ClientSecret": clientSecret,
+	}
+	return s.putJSON(ctx, fmt.Sprintf("AssetAccounts/%d/ApiKeys/%d/ClientSecret", accountID, apiKeyID), body, nil)
+}
+
+// accountAPIKey is the minimal shape of an account API key needed to register it
+// as retrievable.
+type accountAPIKey struct {
+	Id   int    `json:"Id"`
+	Name string `json:"Name"`
 }
 
 // uploadTrustedCertificate registers a CA certificate (base64 DER) as trusted so
@@ -321,6 +409,17 @@ func (s *SPP) uploadTrustedCertificate(ctx context.Context, base64DER string) (i
 
 // certificateProviderID finds the built-in certificate authentication provider.
 func (s *SPP) certificateProviderID(ctx context.Context) (int, error) {
+	return s.providerID(ctx, "Certificate")
+}
+
+// localProviderID finds the built-in local authentication provider.
+func (s *SPP) localProviderID(ctx context.Context) (int, error) {
+	return s.providerID(ctx, "Local")
+}
+
+// providerID finds the authentication provider whose TypeReferenceName matches
+// typeRef (e.g. "Local", "Certificate").
+func (s *SPP) providerID(ctx context.Context, typeRef string) (int, error) {
 	var providers []struct {
 		Id                int    `json:"Id"`
 		TypeReferenceName string `json:"TypeReferenceName"`
@@ -329,11 +428,11 @@ func (s *SPP) certificateProviderID(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("listing authentication providers: %w", err)
 	}
 	for _, p := range providers {
-		if p.TypeReferenceName == "Certificate" {
+		if p.TypeReferenceName == typeRef {
 			return p.Id, nil
 		}
 	}
-	return 0, fmt.Errorf("no certificate authentication provider found")
+	return 0, fmt.Errorf("no %s authentication provider found", typeRef)
 }
 
 // createRegistration creates an A2A registration owned by the certificate user
