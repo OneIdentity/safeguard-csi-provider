@@ -194,20 +194,25 @@ Every other trigger — pull requests, manual runs, and merges to
 `main`/`release-*` — only builds, lints, and tests; nothing is published to
 ghcr.io unless a tag is pushed.
 
-**To cut a release you do not edit any file** — the tag is authoritative and
-stamps the image and both release artifacts on its own. The versions checked
-into the tree (`appVersion` plus the standalone [`deployment/`](./deployment)
-manifests, which are plain YAML and cannot template a value) are only a
-development baseline for installing straight from a source checkout. They are
-deliberately not required to match the next tag; the drift guard just keeps
-them internally consistent. When you *do* want the baseline to track the latest
-release, bump it in one step instead of editing each file by hand:
+The release version lives only in the chart's `appVersion`, and a release tag
+must match it, so the tagged commit truthfully names the version it ships. You
+never hand-edit the version in multiple files — bump it in one step, commit,
+then tag that commit:
 
 ```bash
-scripts/check-versions.sh --set-version 0.4.0   # sets appVersion + aligns manifests
-scripts/check-versions.sh --fix                 # re-align the manifests to appVersion
-scripts/check-versions.sh                        # verify (what CI runs)
+scripts/check-versions.sh --set-version 0.4.0   # sets appVersion + chart version, aligns the deployment manifests
+git commit -am "Release 0.4.0"
+git tag v0.4.0 && git push --tags
 ```
+
+The pipeline stamps the image and both release artifacts from the tag, so they
+match by construction; the version-consistency check (which every build runs)
+fails a `vX.Y.Z` tag whose version doesn't equal `appVersion`, and fails any
+build whose chart values or `deployment/` manifests disagree with it. The
+[`deployment/`](./deployment) manifests are plain YAML that cannot template a
+value, so `--set-version`/`--fix` keep their literal image tag aligned for you.
+Use `scripts/check-versions.sh` (no arguments) to verify locally exactly what
+CI checks.
 
 ## Development
 

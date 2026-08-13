@@ -27,6 +27,9 @@
 #      never auto-emptied, so an intentional pin is never silently discarded.)
 #   3. The raw deployment manifests pin the ghcr image at exactly appVersion.
 #   4. No manifest still references the retired internal ACR registry.
+#   5. On a release tag build (a v* tag ref in RELEASE_REF or BUILD_SOURCEBRANCH),
+#      the tag version equals appVersion, so a tag can't publish while the tree
+#      still names an older version. Branch, PR, and local runs skip this check.
 set -euo pipefail
 
 mode="check"
@@ -149,6 +152,24 @@ fi
 if grep -rn "${retired_registry}" charts/ "$deploy_dir"/ >/dev/null 2>&1; then
   drift "found retired registry '${retired_registry}'; public images must use '${image_repo}'"
 fi
+
+# 5. On a release tag build, the tag must match appVersion so the tagged commit's
+#    tree truthfully reflects the version being published. The pipeline stamps the
+#    artifacts from the tag regardless, but this stops a tag from shipping while
+#    the checked-in baseline still names an older version. Only enforced when a
+#    v* tag ref is present (RELEASE_REF, or Azure DevOps' BUILD_SOURCEBRANCH);
+#    branch, PR, and local runs skip it.
+release_ref="${RELEASE_REF:-${BUILD_SOURCEBRANCH:-}}"
+case "${release_ref}" in
+  refs/tags/v*)
+    tag_version="$(printf '%s' "${release_ref#refs/tags/v}" | tr -d '\r')"
+    if [ "${tag_version}" != "${app_version}" ]; then
+      drift "release tag '${release_ref}' (version '${tag_version}') does not match appVersion '${app_version}'; run 'scripts/check-versions.sh --set-version ${tag_version}', commit, and re-tag that commit"
+    else
+      echo "Release tag ${release_ref} matches appVersion ${app_version}."
+    fi
+    ;;
+esac
 
 if [ "${fail}" -ne 0 ]; then
   echo "Version consistency check FAILED." >&2
