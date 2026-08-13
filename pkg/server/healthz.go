@@ -52,7 +52,9 @@ func (h *HealthZ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	if _, err := w.Write([]byte("ok")); err != nil {
+		klog.ErrorS(err, "failed to write health check response")
+	}
 	klog.V(5).Infof("Completed health check")
 }
 
