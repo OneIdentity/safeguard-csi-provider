@@ -16,8 +16,11 @@ On each mount the provider:
 2. Lists every account the certificate's A2A registrations expose
    (`GetRetrievableAccounts`), each carrying a per-account API key.
 3. Filters those accounts to the requested `appName` (the registration's
-   application name), or keeps all of them when `appName` is empty.
-4. Retrieves each account's credential in the requested `objectType`.
+   application name), or keeps all of them when `appName` is empty. When
+   `accountNames` is set, accounts are further narrowed to that list.
+4. Retrieves each account's credential in the requested `objectType`, then
+   writes either one file per account (default) or a single consolidated JSON
+   bundle (`outputFormat: bundle`).
 
 ## SecretProviderClass parameters
 
@@ -38,8 +41,12 @@ spec:
 | --- | --- | --- | --- |
 | `safeguardHost` | yes | — | Hostname of the Safeguard appliance, e.g. `safeguard.example.com`. Do not include a scheme or path. |
 | `appName` | no | *(all)* | A2A registration application name. Only accounts belonging to this registration are mounted. Empty mounts every account the certificate can retrieve. |
-| `objectType` | no | `Password` | Credential type to retrieve for all matched accounts: `Password`, `PrivateKey`, or `ApiKey` (case-insensitive). |
-| `keyFormat` | no | `OpenSsh` | SSH private-key format, used only when `objectType: PrivateKey`: `OpenSsh`, `Ssh2`, or `Putty`. |
+| `accountNames` | no | *(all)* | Comma-separated list of account names to mount. Matching is case-insensitive. Applied in addition to `appName`. Empty mounts every matched account. |
+| `objectType` | no | `Password` | Credential type for **file-per-account** output: `Password`, `PrivateKey`, or `ApiKey` (case-insensitive). |
+| `outputFormat` | no | `file-per-account` | `file-per-account` writes one file per account (using `objectType`). `bundle` writes a single JSON file keyed by account name carrying every `objectTypes` value. |
+| `objectTypes` | no | value of `objectType` | Comma-separated credential types included per account in **bundle** mode, e.g. `Password,PrivateKey,ApiKey`. |
+| `bundleFile` | no | `secrets.json` | File name for the bundle in **bundle** mode. Must be a plain file name with no path separators. |
+| `keyFormat` | no | `OpenSsh` | SSH private-key format, used when a `PrivateKey` is retrieved: `OpenSsh`, `Ssh2`, or `Putty`. |
 | `safeguardCaBundle` | no | *(system roots)* | PEM CA bundle used to verify the appliance certificate. Set this when the appliance uses a privately issued certificate. |
 | `insecureSkipVerify` | no | `false` | When `"true"`, disables appliance certificate verification. **Bootstrapping only — never use in production.** |
 
@@ -69,19 +76,66 @@ kubectl create secret generic safeguard-a2a \
 kubectl label secret safeguard-a2a secrets-store.csi.k8s.io/used=true
 ```
 
-## Account-to-file mapping
+## Output layout
 
-Each retrieved account produces **one file** in the mount, named after the
-account (`AccountName`). The file contents depend on `objectType`:
+### File per account (default)
+
+With `outputFormat: file-per-account` (the default) each retrieved account
+produces **one file** in the mount, named after the account (`AccountName`). The
+file contents depend on `objectType`:
 
 | `objectType` | File contents |
 | --- | --- |
 | `Password` | Plaintext password. |
-| `PrivateKey` | SSH private key in the requested `keyFormat`. |
+| `PrivateKey` | SSH private key in the requested `keyFormat`, with LF line endings. |
 | `ApiKey` | JSON array of the account's API key credentials: `id`, `name`, `description`, `clientId`, `clientSecret`, `clientSecretId`. |
 
 If two registrations expose accounts with the same name and `appName` is empty,
-they map to the same file name; set `appName` to disambiguate.
+they map to the same file name; set `appName` or `accountNames` to disambiguate.
+
+### Bundle (`outputFormat: bundle`)
+
+Bundle mode writes a **single JSON file** (`bundleFile`, default `secrets.json`)
+keyed by account name. Each account carries every credential type listed in
+`objectTypes`. This gives higher secret density (one file, one inotify watch) and
+lets a workload read multiple accounts and credential types in one read, while
+still keeping everything in tmpfs and nothing in etcd.
+
+```yaml
+parameters:
+  safeguardHost: safeguard.example.com
+  appName: my-application
+  accountNames: db-admin,svc-account
+  outputFormat: bundle
+  objectTypes: Password,PrivateKey,ApiKey
+  keyFormat: OpenSsh
+```
+
+Produces `secrets.json`:
+
+```json
+{
+  "db-admin": {
+    "password": "…",
+    "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n",
+    "apiKey": [ { "clientId": "…", "clientSecret": "…", "…": "…" } ]
+  },
+  "svc-account": {
+    "password": "…"
+  }
+}
+```
+
+Only the credential types actually present for an account are emitted (missing
+types are omitted). `privateKey` line endings are normalized to LF; `apiKey`
+nests as structured JSON rather than an escaped string.
+
+### Line-ending normalization
+
+Safeguard returns SSH key material with Windows CRLF line endings. The provider
+normalizes key material to **LF** before writing it, in both output modes, so
+Linux workloads and strict key parsers can consume the mounted key directly.
+Passwords are written byte-for-byte and are never modified.
 
 ## Appliance certificate trust
 

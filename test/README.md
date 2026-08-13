@@ -76,8 +76,20 @@ Prerequisites on the Linux host / WSL2:
 The two responsibilities are split. `test/e2e/setup.sh` brings up the
 infrastructure (k3s + the provider image + the Secrets Store CSI Driver + this
 provider's DaemonSet) and is idempotent. The Go test only creates the per-run
-objects (namespace, `SecretProviderClass`, consumer pod), asserts the mounted
-file, and tears them down; it preflights that `setup.sh` has already run.
+objects (namespace, `SecretProviderClass`, consumer pod) and tears them down; it
+preflights that `setup.sh` has already run. `TestE2EMount` runs two subtests
+against one provisioned account:
+
+- **FilePerAccount** mounts the password, SSH private key, and API key as three
+  separate CSI volumes and asserts each: the password is byte-exact, the SSH key
+  is LF-clean and parses to a public half matching the appliance, and the API
+  key JSON carries the provisioned client secret.
+- **Bundle** mounts a single `outputFormat: bundle` volume and asserts one
+  `secrets.json` carries all three credential types for the account.
+
+> After changing provider code, rebuild and reimport the image before running
+> the test — `setup.sh` does this, then force a rollout so the DaemonSet picks up
+> the new image: `kubectl -n kube-system rollout restart daemonset/safeguard-csi-provider`.
 
 ```bash
 sudo test/e2e/setup.sh                 # once; safe to re-run

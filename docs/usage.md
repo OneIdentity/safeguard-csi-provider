@@ -110,7 +110,8 @@ Consume it as environment variables:
     keyFormat: OpenSsh      # or Ssh2, Putty
 ```
 
-Each account's file contains its SSH private key in the requested format.
+Each account's file contains its SSH private key in the requested format. Key
+material is normalized to LF line endings so Linux pods can consume it directly.
 
 ### API keys
 
@@ -128,8 +129,37 @@ and `clientSecretId`.
 A single `SecretProviderClass` retrieves **every** account exposed by the
 matched A2A registration(s), producing one file per account. Leave `appName`
 empty to retrieve every account the client certificate can access across all its
-registrations. All accounts in one mount share the same `objectType`; use
-separate `SecretProviderClass` objects when you need different types.
+registrations. Set `accountNames` (comma-separated, case-insensitive) to narrow
+the mount to specific accounts. In file-per-account mode all accounts share the
+same `objectType`; use separate `SecretProviderClass` objects, or bundle mode,
+when you need different types.
+
+## Serving different secrets to different pods
+
+Because each mount is scoped by its `SecretProviderClass` (`appName` /
+`accountNames`) **and** by the client certificate in its `nodePublishSecretRef`,
+different pods can receive entirely different credentials from the same provider.
+The client certificate is the real authorization boundary: a pod can only ever
+receive accounts its A2A registration is entitled to retrieve.
+
+## Bundling many credentials into one file
+
+For higher density, `outputFormat: bundle` writes a single JSON file keyed by
+account name, carrying every credential type in `objectTypes`:
+
+```yaml
+  parameters:
+    appName: my-application
+    accountNames: db-admin,svc-account
+    outputFormat: bundle
+    objectTypes: Password,PrivateKey,ApiKey
+    keyFormat: OpenSsh
+```
+
+This produces one `secrets.json` (one file, one inotify watch) instead of many
+files, while still keeping everything in tmpfs and nothing in etcd. See the
+[configuration reference](./configuration.md#bundle-outputformat-bundle) for the
+JSON shape.
 
 ## Next steps
 

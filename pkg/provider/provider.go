@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,10 +31,11 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 
 	sgHost := strings.TrimSpace(attrib["safeguardHost"])
 	appName := strings.TrimSpace(attrib["appName"])
+	accountFilter := parseNameSet(attrib["accountNames"])
 	podName := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.name"])
 	podNamespace := strings.TrimSpace(attrib["csi.storage.k8s.io/pod.namespace"])
 
-	objectType, keyFormat, err := parseObjectType(attrib)
+	out, err := parseOutputConfig(attrib)
 	if err != nil {
 		klog.Error(err)
 		return files, objectVersionMap, err
@@ -63,16 +65,28 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 
 	// Filter to the requested application registration when appName is supplied.
 	// An empty appName retrieves every account the certificate can access.
+	bundle := make(map[string]accountBundle)
 	matched := 0
 	for _, account := range accounts {
 		if appName != "" && account.ApplicationName != appName {
 			continue
 		}
+		if accountFilter != nil {
+			if _, ok := accountFilter[strings.ToLower(account.AccountName)]; !ok {
+				continue
+			}
+		}
 		matched++
 
 		klog.Infof("Looking up %s", account.AccountName)
 
-		cred, err := retrieveCredential(ctx, a2a, account, objectType, keyFormat)
+		if out.bundle {
+			bundle[account.AccountName] = retrieveAccountBundle(ctx, a2a, account, out.objectTypes, out.keyFormat)
+			objectVersionMap[strconv.Itoa(account.AccountID)] = uuid.New().String()
+			continue
+		}
+
+		cred, err := retrieveCredential(ctx, a2a, account, out.objectTypes[0], out.keyFormat)
 		if err != nil {
 			klog.Errorf("Could not fetch secret %s because %s", account.AccountName, err.Error())
 			continue
@@ -85,9 +99,21 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 		klog.InfoS("added file to the gRPC response", "file", account.AccountName, "pod", klog.ObjectRef{Namespace: podNamespace, Name: podName})
 	}
 
-	if appName != "" && matched == 0 {
-		klog.Errorf("Requested app name %s had no retrievable accounts", appName)
-		return files, objectVersionMap, fmt.Errorf("requested app name %s had no retrievable accounts", appName)
+	if matched == 0 && (appName != "" || accountFilter != nil) {
+		err := fmt.Errorf("no retrievable accounts matched (appName=%q, accountNames=%q)",
+			appName, strings.TrimSpace(attrib["accountNames"]))
+		klog.Error(err)
+		return files, objectVersionMap, err
+	}
+
+	if out.bundle {
+		data, err := json.MarshalIndent(bundle, "", "  ")
+		if err != nil {
+			klog.Error(err)
+			return files, objectVersionMap, err
+		}
+		files[out.bundleFile] = data
+		klog.InfoS("added bundle to the gRPC response", "file", out.bundleFile, "accounts", matched, "pod", klog.ObjectRef{Namespace: podNamespace, Name: podName})
 	}
 
 	return files, objectVersionMap, nil
@@ -137,31 +163,130 @@ func connectionOptions(attrib map[string]string) ([]safeguard.Option, error) {
 	return connOpts, nil
 }
 
-// parseObjectType resolves the optional objectType attribute (defaulting to
-// Password) and, for private keys, the optional keyFormat attribute.
-func parseObjectType(attrib map[string]string) (string, safeguard.KeyFormat, error) {
-	objectType := strings.TrimSpace(attrib["objectType"])
+// outputConfig captures the resolved output shaping for a mount request: whether
+// to write one file per account or a single consolidated JSON bundle, which
+// object types to retrieve, and the SSH key format.
+type outputConfig struct {
+	bundle      bool
+	bundleFile  string
+	objectTypes []string
+	keyFormat   safeguard.KeyFormat
+}
+
+// parseOutputConfig resolves the outputFormat, objectType(s), keyFormat, and
+// bundleFile attributes into an outputConfig.
+//
+// outputFormat defaults to "file-per-account": one file per account, named after
+// the account, carrying the single objectType (default Password). "bundle"
+// writes a single JSON file (bundleFile, default secrets.json) keyed by account
+// name, carrying every objectTypes value for each account.
+func parseOutputConfig(attrib map[string]string) (outputConfig, error) {
+	keyFormat, err := parseKeyFormat(attrib["keyFormat"])
+	if err != nil {
+		return outputConfig{}, err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(attrib["outputFormat"])) {
+	case "", "file", "files", "file-per-account", "fileperaccount":
+		objectType, err := normalizeObjectType(attrib["objectType"])
+		if err != nil {
+			return outputConfig{}, err
+		}
+		return outputConfig{objectTypes: []string{objectType}, keyFormat: keyFormat}, nil
+
+	case "bundle", "json":
+		objectTypes, err := parseObjectTypes(attrib)
+		if err != nil {
+			return outputConfig{}, err
+		}
+		bundleFile := strings.TrimSpace(attrib["bundleFile"])
+		if bundleFile == "" {
+			bundleFile = "secrets.json"
+		}
+		if strings.ContainsAny(bundleFile, `/\`) {
+			return outputConfig{}, fmt.Errorf("bundleFile %q must be a plain file name without path separators", bundleFile)
+		}
+		return outputConfig{bundle: true, bundleFile: bundleFile, objectTypes: objectTypes, keyFormat: keyFormat}, nil
+
+	default:
+		return outputConfig{}, fmt.Errorf("unsupported outputFormat %q (expected file-per-account or bundle)",
+			strings.TrimSpace(attrib["outputFormat"]))
+	}
+}
+
+// normalizeObjectType resolves a single objectType value (defaulting to Password)
+// to its canonical Safeguard spelling.
+func normalizeObjectType(raw string) (string, error) {
+	objectType := strings.TrimSpace(raw)
 	if objectType == "" {
 		objectType = "Password"
 	}
-
 	switch strings.ToLower(objectType) {
 	case "password":
-		objectType = "Password"
+		return "Password", nil
 	case "privatekey":
-		objectType = "PrivateKey"
+		return "PrivateKey", nil
 	case "apikey":
-		objectType = "ApiKey"
+		return "ApiKey", nil
 	default:
-		return "", "", fmt.Errorf("unsupported objectType %q (expected Password, PrivateKey, or ApiKey)", objectType)
+		return "", fmt.Errorf("unsupported objectType %q (expected Password, PrivateKey, or ApiKey)", objectType)
+	}
+}
+
+// parseObjectTypes resolves the objectTypes attribute (a comma-separated list)
+// used by bundle mode, falling back to the single objectType attribute and then
+// to Password. Duplicates are dropped while order is preserved.
+func parseObjectTypes(attrib map[string]string) ([]string, error) {
+	raw := strings.TrimSpace(attrib["objectTypes"])
+	if raw == "" {
+		objectType, err := normalizeObjectType(attrib["objectType"])
+		if err != nil {
+			return nil, err
+		}
+		return []string{objectType}, nil
 	}
 
-	keyFormat, err := parseKeyFormat(attrib["keyFormat"])
-	if err != nil {
-		return "", "", err
+	seen := make(map[string]struct{})
+	var types []string
+	for _, part := range strings.Split(raw, ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		objectType, err := normalizeObjectType(part)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[objectType]; ok {
+			continue
+		}
+		seen[objectType] = struct{}{}
+		types = append(types, objectType)
 	}
+	if len(types) == 0 {
+		return nil, fmt.Errorf("objectTypes %q contained no valid object types", raw)
+	}
+	return types, nil
+}
 
-	return objectType, keyFormat, nil
+// parseNameSet parses a comma-separated attribute into a lowercased lookup set,
+// returning nil when empty (meaning "no filter"). Account-name matching is
+// case-insensitive.
+func parseNameSet(raw string) map[string]struct{} {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	set := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			set[strings.ToLower(part)] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
 }
 
 // parseKeyFormat resolves the optional keyFormat attribute used when retrieving
@@ -181,6 +306,39 @@ func parseKeyFormat(raw string) (safeguard.KeyFormat, error) {
 	}
 }
 
+// accountBundle is one account's entry in a consolidated JSON bundle. Only the
+// requested object types are populated; the rest are omitted.
+type accountBundle struct {
+	Password   *string         `json:"password,omitempty"`
+	PrivateKey *string         `json:"privateKey,omitempty"`
+	APIKey     json.RawMessage `json:"apiKey,omitempty"`
+}
+
+// retrieveAccountBundle fetches each requested object type for a single account
+// and assembles them into an accountBundle. A failure to retrieve one type is
+// logged and that type is omitted, so a partial bundle is still returned.
+func retrieveAccountBundle(ctx context.Context, a2a *safeguard.A2AContext, account safeguard.A2ARetrievableAccount, objectTypes []string, keyFormat safeguard.KeyFormat) accountBundle {
+	var bundle accountBundle
+	for _, objectType := range objectTypes {
+		cred, err := retrieveCredential(ctx, a2a, account, objectType, keyFormat)
+		if err != nil {
+			klog.Errorf("Could not fetch %s for %s because %s", objectType, account.AccountName, err.Error())
+			continue
+		}
+		switch objectType {
+		case "Password":
+			s := string(cred)
+			bundle.Password = &s
+		case "PrivateKey":
+			s := string(cred)
+			bundle.PrivateKey = &s
+		case "ApiKey":
+			bundle.APIKey = json.RawMessage(cred)
+		}
+	}
+	return bundle
+}
+
 // retrieveCredential fetches the credential for a single account in the requested
 // format and returns the plaintext bytes to write to the pod mount.
 func retrieveCredential(ctx context.Context, a2a *safeguard.A2AContext, account safeguard.A2ARetrievableAccount, objectType string, keyFormat safeguard.KeyFormat) ([]byte, error) {
@@ -196,12 +354,25 @@ func retrieveCredential(ctx context.Context, a2a *safeguard.A2AContext, account 
 		if err != nil {
 			return nil, err
 		}
-		return secret.Expose(), nil
+		// Safeguard returns key material with Windows CRLF line endings.
+		// Normalize to LF so Linux pods (and stricter PEM/key parsers) can
+		// consume the mounted key cleanly. This only rewrites line endings,
+		// which are not semantically significant in PEM/SSH2/PuTTY key formats.
+		return normalizeLineEndings(secret.Expose()), nil
 	case "ApiKey":
 		return retrieveAPIKeySecret(ctx, a2a, account.APIKey)
 	default:
 		return nil, fmt.Errorf("unsupported objectType %q", objectType)
 	}
+}
+
+// normalizeLineEndings converts CRLF and lone CR line endings to LF. It is used
+// for key material, which Safeguard returns with Windows CRLF endings, so the
+// bytes written to a pod mount are clean for Linux consumers.
+func normalizeLineEndings(b []byte) []byte {
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
+	return b
 }
 
 // retrieveAPIKeySecret fetches the API key credentials for an account and
