@@ -8,7 +8,8 @@ import (
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/provider"
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/version"
 
-	"golang.org/x/net/context"
+	"context"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
