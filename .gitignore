@@ -341,6 +341,10 @@ ASALocalRun/
 charts/safeguard-csi-provider/charts/
 manifest_staging/charts/csi-secrets-store-provider-azure/charts/
 
+# packaged charts / rendered release artifacts (produced at release time)
+/*.tgz
+/dist/
+
 # Go tools
 .tools/
 

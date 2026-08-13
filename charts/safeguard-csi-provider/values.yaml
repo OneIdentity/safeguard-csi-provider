@@ -12,7 +12,9 @@ logVerbosity: 0
 linux:
   image:
     repository: ghcr.io/oneidentity/safeguard-csi-provider
-    tag: v0.3.0
+    # Leave empty to track the chart's appVersion (Chart.yaml). Only set this to
+    # pin a specific image tag that differs from the chart version.
+    tag: ""
     pullPolicy: IfNotPresent
   nodeSelector: {}
   tolerations: []
@@ -51,7 +53,9 @@ linux:
 windows:
   image:
     repository: ghcr.io/oneidentity/safeguard-csi-provider
-    tag: v0.3.0
+    # Leave empty to track the chart's appVersion (Chart.yaml). Only set this to
+    # pin a specific image tag that differs from the chart version.
+    tag: ""
     pullPolicy: IfNotPresent
   nodeSelector: {}
   tolerations:

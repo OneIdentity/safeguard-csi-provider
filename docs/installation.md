@@ -46,6 +46,18 @@ corresponding driver features:
 
 ### Helm (recommended)
 
+Install the packaged chart attached to a
+[GitHub Release](https://github.com/OneIdentity/safeguard-csi-provider/releases)
+(replace `X.Y.Z`), which pins the matching provider image by default:
+
+```bash
+helm install safeguard-csi-provider \
+  https://github.com/OneIdentity/safeguard-csi-provider/releases/download/vX.Y.Z/safeguard-csi-provider-X.Y.Z.tgz
+```
+
+Or install from a checkout of the source tree (uses the chart's `appVersion` as
+the image tag):
+
 ```bash
 helm install safeguard-csi-provider ./charts/safeguard-csi-provider
 ```
@@ -54,7 +66,8 @@ Key `values.yaml` settings:
 
 | Value | Default | Description |
 | --- | --- | --- |
-| `linux.image.repository` / `linux.image.tag` | see chart | Provider image. |
+| `linux.image.repository` | `ghcr.io/oneidentity/safeguard-csi-provider` | Provider image. |
+| `linux.image.tag` | chart `appVersion` | Image tag; empty inherits the chart version. Set only to override. |
 | `linux.enabled` | `true` | Deploy the Linux DaemonSet. |
 | `windows.enabled` | `false` | Deploy the Windows DaemonSet. |
 | `logFormatJSON` | `false` | Emit JSON logs. |
@@ -62,6 +75,15 @@ Key `values.yaml` settings:
 | `linux.healthzPort` | `8989` | Liveness probe port. |
 
 ### Raw manifests
+
+Apply the rendered install manifest attached to a release (replace `X.Y.Z`):
+
+```bash
+kubectl apply -f https://github.com/OneIdentity/safeguard-csi-provider/releases/download/vX.Y.Z/safeguard-csi-provider-X.Y.Z.yaml
+```
+
+The legacy standalone manifests in [`deployment/`](../deployment) are also kept
+in sync with the chart version:
 
 ```bash
 kubectl apply -f deployment/provider-azure-installer.yaml

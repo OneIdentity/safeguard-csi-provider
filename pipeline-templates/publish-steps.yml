@@ -42,6 +42,24 @@ steps:
 - script: docker run --privileged --rm tonistiigi/binfmt --install all
   displayName: 'Set up QEMU/binfmt for cross-arch builds'
 
+# Package the Helm chart and render a standalone install manifest, both stamped
+# with the release version, so the GitHub Release carries install artifacts that
+# match the published image by construction (no hand-edited version to drift).
+- script: |
+    set -euo pipefail
+    VER='$(imageVersion)'
+    OUT='$(Build.ArtifactStagingDirectory)'
+    helm package charts/safeguard-csi-provider \
+      --version "$VER" --app-version "$VER" \
+      --destination "$OUT"
+    helm template safeguard-csi-provider charts/safeguard-csi-provider \
+      --namespace kube-system \
+      --set linux.image.tag="$VER" \
+      --set windows.image.tag="$VER" \
+      > "$OUT/safeguard-csi-provider-$VER.yaml"
+    ls -l "$OUT"
+  displayName: 'Package Helm chart and render install manifest'
+
 # Build every OS/arch image and push the annotated manifest list, reusing the
 # Makefile's container-all + push-manifest targets against ghcr.io.
 - script: |
@@ -74,5 +92,7 @@ steps:
     isPreRelease: false
     changeLogCompareToRelease: 'lastFullRelease'
     changeLogType: 'commitBased'
+    assets: '$(Build.ArtifactStagingDirectory)/*'
+    assetUploadMode: 'replace'
   displayName: 'Create GitHub release'
   condition: succeeded()

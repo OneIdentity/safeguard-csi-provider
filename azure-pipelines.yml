@@ -42,6 +42,8 @@ jobs:
       vmImage: 'ubuntu-latest'
     steps:
       - template: pipeline-templates/go-ci-steps.yml
+      - script: bash scripts/check-versions.sh
+        displayName: 'Check chart/manifest version consistency'
 
   - job: Publish
     displayName: 'Publish tagged release image'

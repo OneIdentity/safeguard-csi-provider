@@ -23,7 +23,7 @@ spec:
       serviceAccountName: safeguard-csi-provider
       containers:
         - name: provider-safeguard-installer
-          image: ghcr.io/oneidentity/safeguard-csi-provider:v0.3.0
+          image: ghcr.io/oneidentity/safeguard-csi-provider:0.3.0
           imagePullPolicy: IfNotPresent
           args:
             - --endpoint=unix://C:\\provider\\safeguard.sock
