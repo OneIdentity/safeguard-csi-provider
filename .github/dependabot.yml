@@ -1,0 +1,80 @@
+# Dependabot configuration for safeguard-csi-provider.
+#
+# Ecosystems covered:
+#   * gomod           -- Go module dependencies. Two modules live in this
+#                        repo: the main module at the root and the build
+#                        tooling module under /tools.
+#   * github-actions  -- workflow file dependencies (CodeQL, etc.).
+#   * docker          -- base images referenced by the container build.
+#
+# Major-version bumps are excluded; they require human review and a
+# separate planning cycle (semantic-import versioning for Go means a
+# major bump changes the module import path).
+#
+# GitHub Private Vulnerability Disclosure (PVD) should be enabled in
+# the repository's Security tab; that toggle is not file-driven.
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    groups:
+      go-patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "gomod"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      tools-patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      actions-patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      docker-patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
