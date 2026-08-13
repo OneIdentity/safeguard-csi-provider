@@ -17,7 +17,7 @@ import (
 // Fixture is the result of provisioning a complete A2A retrieval scenario on a
 // live appliance. A single account holds a password, an SSH key, and an API key;
 // the retrieval type is chosen by the SDK method at retrieval time, so one
-// registered account serves all three Layer 0 tests.
+// registered account serves all three live A2A tests.
 type Fixture struct {
 	// AppName is the A2A registration application name. It maps directly to the
 	// provider's `appName` mount attribute.

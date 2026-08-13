@@ -1,7 +1,7 @@
 # Live and end-to-end test harness
 
 These suites exercise the provider against a **real Safeguard appliance** and,
-for the end-to-end layer, a **real Kubernetes (k3s) node**. They are deliberately
+for the end-to-end suite, a **real Kubernetes (k3s) node**. They are deliberately
 kept out of `go test ./...` and CI by build tags, because they require secrets,
 network access, and a mutable throwaway appliance.
 
@@ -10,15 +10,12 @@ network access, and a mutable throwaway appliance.
 > named with a unique run ID and cleaned up in reverse order, but you should
 > still point this at an appliance you are comfortable mutating.
 
-## Layers
+## Suites
 
-| Layer | Build tag | What it proves | Location |
+| Suite | Build tag | What it proves | Location |
 | --- | --- | --- | --- |
-| 0 — Live A2A | `live` | The SDK + a generated client certificate complete real password / SSH key / API key retrievals against the appliance. | `test/live` |
-| 2 — End-to-end | `e2e` | The CSI driver → provider DaemonSet → pod mount path writes the real credential into a pod on a real kubelet. | `test/e2e` |
-
-Layer 1 (provider gRPC over a socket, no cluster) is intentionally skipped: the
-end-to-end layer covers the same path with more fidelity.
+| Live A2A | `live` | The SDK + a generated client certificate complete real password / SSH key / API key retrievals against the appliance. | `test/live` |
+| End-to-end | `e2e` | The CSI driver → provider DaemonSet → pod mount path writes the real credential into a pod on a real kubelet. | `test/e2e` |
 
 The shared provisioning, PKI, and cleanup code lives in `test/harness` and has no
 build tag, so it compiles with the normal build but never runs on its own.
@@ -33,8 +30,8 @@ build tag, so it compiles with the normal build but never runs on its own.
    certificate user mapped to the client-certificate thumbprint.
 5. Create an A2A registration exposing the account's password, SSH key, and API
    key to that certificate user.
-6. Retrieve each credential and assert it matches (Layer 0), or mount it into a
-   pod and assert the file contents (Layer 2).
+6. Retrieve each credential and assert it matches (live A2A suite), or mount it
+   into a pod and assert the file contents (end-to-end suite).
 7. Delete everything created, in reverse order (unless `SAFEGUARD_KEEP=1`).
 
 ## Configuration (environment variables)
@@ -50,7 +47,7 @@ build tag, so it compiles with the normal build but never runs on its own.
 | `SAFEGUARD_KEEP` | no | `false` | Leave provisioned objects in place for debugging. |
 | `SAFEGUARD_RUN_ID` | no | `csi-e2e-<unix>` | Override the unique per-run object-name prefix. |
 
-## Running Layer 0 (live A2A)
+## Running the live A2A suite
 
 ```bash
 export SAFEGUARD_HOST=sg.test.example.com
@@ -60,9 +57,9 @@ export SAFEGUARD_INSECURE=true          # or SAFEGUARD_CA_BUNDLE_FILE=/path/ca.p
 go test -tags live -v ./test/live/...
 ```
 
-## Running Layer 2 (end-to-end on k3s)
+## Running the end-to-end suite (on k3s)
 
-Layer 2 must run **on a Linux host** because it drives `k3s`, `kubectl`, and
+The end-to-end suite must run **on a Linux host** because it drives `k3s`, `kubectl`, and
 `helm` locally. On Windows, run it inside **WSL2**.
 
 Prerequisites on the Linux host / WSL2:
@@ -94,7 +91,7 @@ against one provisioned account:
 ```bash
 sudo test/e2e/setup.sh                 # once; safe to re-run
 
-# same SAFEGUARD_* exports as Layer 0, plus KUBECONFIG, then:
+# same SAFEGUARD_* exports as the live A2A suite, plus KUBECONFIG, then:
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 sudo -E env "PATH=$PATH" go test -tags e2e -v -timeout 900s ./test/e2e/...
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh brings up the infrastructure the Layer 2 (e2e) test asserts against:
+# setup.sh brings up the infrastructure the end-to-end (e2e) test asserts against:
 # a single-node k3s cluster, the provider image built and imported into that
 # cluster, the upstream Secrets Store CSI Driver, and this provider's DaemonSet.
 #
