@@ -24,10 +24,10 @@ flowchart LR
 2. The CSI driver calls this provider's gRPC `Mount` endpoint with the class
    attributes and the node-publish secret (the client certificate and key).
 3. The provider builds an A2A context with the client certificate, enumerates the
-   accounts the certificate is registered to retrieve, filters them by `appName`,
-   and retrieves each account's credential.
+   accounts the certificate is registered to retrieve, filters them by `appName`
+   and `accountNames`, and retrieves each account's credential.
 4. Each credential is written to the pod's mount as a file named after the
-   account.
+   account, or — in bundle mode — combined into a single JSON file.
 
 ## Documentation
 
@@ -49,8 +49,12 @@ The sections below are a quick reference; the guides above go deeper.
 | --- | --- | --- | --- |
 | `safeguardHost` | yes | — | Hostname of the Safeguard appliance (e.g. `safeguard.example.com`). |
 | `appName` | no | *(all)* | A2A registration application name to filter accounts by. When empty, every account the certificate can retrieve is mounted. |
-| `objectType` | no | `Password` | Credential type to retrieve: `Password`, `PrivateKey`, or `ApiKey`. Applies to all matched accounts. |
-| `keyFormat` | no | `OpenSsh` | SSH private-key format when `objectType: PrivateKey`: `OpenSsh`, `Ssh2`, or `Putty`. |
+| `accountNames` | no | *(all)* | Comma-separated account names to mount (case-insensitive), applied in addition to `appName`. Empty mounts every matched account. |
+| `objectType` | no | `Password` | Credential type for file-per-account output: `Password`, `PrivateKey`, or `ApiKey`. Applies to all matched accounts. |
+| `outputFormat` | no | `file-per-account` | `file-per-account` writes one file per account; `bundle` writes a single JSON file keyed by account name carrying every `objectTypes` value. |
+| `objectTypes` | no | value of `objectType` | Comma-separated credential types included per account in bundle mode, e.g. `Password,PrivateKey,ApiKey`. |
+| `bundleFile` | no | `secrets.json` | Bundle file name (plain name, no path separators) when `outputFormat: bundle`. |
+| `keyFormat` | no | `OpenSsh` | SSH private-key format when a `PrivateKey` is retrieved: `OpenSsh`, `Ssh2`, or `Putty`. Key material is normalized to LF. |
 | `safeguardCaBundle` | no | *(system roots)* | PEM CA bundle used to verify the appliance certificate. Set this when the appliance uses a privately issued certificate. |
 | `insecureSkipVerify` | no | `false` | When `true`, disables verification of the appliance certificate. **Intended for bootstrapping only — do not use in production.** |
 
@@ -74,14 +78,27 @@ openssl pkcs12 -in client.pfx -nocerts -nodes -out clientKey.pem
 
 ## Output
 
-Each retrieved account produces one file in the mount, named after the account:
+By default (`outputFormat: file-per-account`) each retrieved account produces one
+file in the mount, named after the account:
 
 - `objectType: Password` — the file contains the plaintext password.
 - `objectType: PrivateKey` — the file contains the SSH private key in the
-  requested `keyFormat`.
+  requested `keyFormat`, with LF line endings.
 - `objectType: ApiKey` — the file contains a JSON array of the account's API key
   credentials (`id`, `name`, `description`, `clientId`, `clientSecret`,
   `clientSecretId`).
+
+With `outputFormat: bundle` the provider instead writes a single JSON file
+(`bundleFile`, default `secrets.json`) keyed by account name, where each account
+carries every credential type listed in `objectTypes`. This gives higher secret
+density (one file, one inotify watch) while still keeping everything in tmpfs and
+nothing in etcd. See the
+[configuration reference](./docs/configuration.md#bundle-outputformat-bundle) for
+the JSON shape and an example.
+
+Safeguard returns SSH key material with Windows CRLF line endings; the provider
+normalizes it to LF in both output modes so Linux workloads can consume the
+mounted key directly. Passwords are written byte-for-byte.
 
 ## Example
 
