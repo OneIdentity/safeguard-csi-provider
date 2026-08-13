@@ -54,7 +54,7 @@ The provider tests are hermetic: they stand up an in-process TLS fake appliance
 (`httptest`) and a generated client certificate, so no real Safeguard is needed.
 
 > On Windows without gcc, `-race` (and therefore `make unit-test`) fails to link.
-> Use `go test ./...` locally; CI runs the race detector on Linux.
+> Use `go test ./...` locally; run `-race` on Linux (with gcc) for the race detector.
 
 ## Lint
 
@@ -76,12 +76,14 @@ Image coordinates are controlled by `REGISTRY_NAME`, `REPO_PREFIX`,
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on pushes and pull requests:
+CI is not configured in this repository yet. Before opening a pull request, run
+the same checks locally:
 
-- `go mod tidy` cleanliness check
-- `go vet`
-- `go test -race` (Ubuntu)
-- Cross-compile for Linux and Windows
+```bash
+go mod tidy && git diff --exit-code -- go.mod go.sum   # tidy check
+go vet ./...
+go test -race ./...                                    # Linux, needs gcc
+```
 
 ## Dependencies
 
@@ -98,8 +100,8 @@ The provider tracks a released tag of `safeguard-go`. When bumping it, update
 2. Bump `IMAGE_VERSION` in the `Makefile` (and chart `values.yaml` if pinned).
 3. Tag the release and build/push images with `make container-all push-manifest`.
 
-> **Planned:** release automation will move to a tag-triggered GitHub Actions
-> workflow driven by [goreleaser](https://goreleaser.com/) — producing GitHub
-> Releases (checksums, SBOM, changelog) and Linux `amd64`/`arm64` images plus a
+> **Planned:** release automation will move to a tag-triggered pipeline driven
+> by [goreleaser](https://goreleaser.com/) — producing release artifacts
+> (checksums, SBOM, changelog) and Linux `amd64`/`arm64` images plus a
 > manifest. The Windows nanoserver multi-version images may continue to use
 > `buildx` until the goreleaser manifest path is validated for them.

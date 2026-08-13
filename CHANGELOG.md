@@ -30,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `insecureSkipVerify` parameter to bypass appliance certificate verification
   for bootstrapping (not for production).
 - Hermetic unit tests using an in-process TLS fake appliance.
-- GitHub Actions CI (tidy check, vet, race tests, Linux/Windows build).
 - Documentation set under `docs/` and expanded examples.
 - Apache 2.0 `LICENSE` and `NOTICE`.
 
