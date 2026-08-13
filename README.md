@@ -194,6 +194,21 @@ Every other trigger — pull requests, manual runs, and merges to
 `main`/`release-*` — only builds, lints, and tests; nothing is published to
 ghcr.io unless a tag is pushed.
 
+**To cut a release you do not edit any file** — the tag is authoritative and
+stamps the image and both release artifacts on its own. The versions checked
+into the tree (`appVersion` plus the standalone [`deployment/`](./deployment)
+manifests, which are plain YAML and cannot template a value) are only a
+development baseline for installing straight from a source checkout. They are
+deliberately not required to match the next tag; the drift guard just keeps
+them internally consistent. When you *do* want the baseline to track the latest
+release, bump it in one step instead of editing each file by hand:
+
+```bash
+scripts/check-versions.sh --set-version 0.4.0   # sets appVersion + aligns manifests
+scripts/check-versions.sh --fix                 # re-align the manifests to appVersion
+scripts/check-versions.sh                        # verify (what CI runs)
+```
+
 ## Development
 
 ```bash
