@@ -169,6 +169,51 @@ make unit-test      # run unit tests
 make container      # build the container image
 ```
 
+Released images are published to
+`ghcr.io/oneidentity/safeguard-csi-provider` as a single multi-arch manifest
+covering `linux/amd64`, `linux/arm64`, and `windows/amd64` (nanoserver).
+
+## Releasing
+
+The release version lives in exactly one place: the chart's `appVersion`
+([`Chart.yaml`](./charts/safeguard-csi-provider/Chart.yaml)). The chart image
+tags inherit it, and CI fails a build whose manifests disagree with it
+(`scripts/check-versions.sh`), so nothing has to be hand-synced.
+
+Releases are built and published by the Azure DevOps pipeline
+([`azure-pipelines.yml`](./azure-pipelines.yml)). Pushing a `vX.Y.Z` tag:
+
+- builds the multi-arch image and pushes
+  `ghcr.io/oneidentity/safeguard-csi-provider:X.Y.Z` (and moves `:latest`),
+- packages the Helm chart (`safeguard-csi-provider-X.Y.Z.tgz`) and renders a
+  standalone install manifest (`safeguard-csi-provider-X.Y.Z.yaml`), both
+  stamped with the tag version so they match the image by construction, and
+- creates the GitHub Release with those two files attached.
+
+Every other trigger — pull requests, manual runs, and merges to
+`main`/`release-*` — only builds, lints, and tests; nothing is published to
+ghcr.io unless a tag is pushed.
+
+The release version lives only in the chart's `appVersion`, and a release tag
+must match it, so the tagged commit truthfully names the version it ships. You
+never hand-edit the version in multiple files — bump it in one step, commit,
+then tag that commit:
+
+```bash
+scripts/check-versions.sh --set-version 0.4.0   # sets appVersion + chart version, aligns the deployment manifests
+git commit -am "Release 0.4.0"
+git tag v0.4.0 && git push --tags
+```
+
+The pipeline stamps the image and both release artifacts from the tag, so they
+match by construction; the version-consistency check (which every build runs)
+fails a `vX.Y.Z` tag whose version doesn't equal `appVersion`, and fails any
+build whose chart values or `deployment/` manifests disagree with it. The
+[`deployment/`](./deployment) manifests are plain YAML that cannot template a
+value, so `--set-version`/`--fix` keep their literal image tag aligned for you.
+Use `scripts/check-versions.sh` (no arguments) to verify locally exactly what
+CI checks.
+
 ## Development
 
 ```bash

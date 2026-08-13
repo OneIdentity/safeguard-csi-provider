@@ -46,6 +46,14 @@ type Fixture struct {
 	// ExpectedClientSecret is the OAuth client secret stored on the account's API
 	// key.
 	ExpectedClientSecret string
+
+	// LeanAccountName is a second retrievable account carrying only a password
+	// (no SSH key, no API key). It lets a live test exercise a heterogeneous
+	// bundle mount where one account lacks some requested credential types.
+	LeanAccountName string
+
+	// LeanExpectedPassword is the password set on the lean account.
+	LeanExpectedPassword string
 }
 
 // AdminRoles are the least-privilege administrative roles the dedicated test
@@ -63,10 +71,11 @@ var AdminRoles = []string{"AssetAdmin", "UserAdmin", "PolicyAdmin", "ApplianceAd
 //  1. bootstrap: create a dedicated least-privilege admin, set its password
 //  2. reconnect as that admin (all remaining objects are owned by it)
 //  3. create an asset ("Other Managed" platform) and an account
-//  4. set the account password, install an SSH key, mint an API key + secret
+//  4. set the account password, install an SSH key, mint an API key + secret,
+//     and create a second "lean" account carrying only a password
 //  5. upload the client CA as a trusted certificate
 //  6. create the certificate user bound to the client thumbprint
-//  7. create the A2A registration and add the account as retrievable
+//  7. create the A2A registration and add both accounts as retrievable
 func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, teardown func(context.Context), err error) {
 	pki, err := GenerateClientPKI(cfg.Name("client"))
 	if err != nil {
@@ -188,6 +197,26 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 		return nil, nil, fmt.Errorf("setting account API key secret: %w", err)
 	}
 
+	// A second account on the same asset that carries only a password. It lets a
+	// live test mount a heterogeneous bundle (Password + PrivateKey + ApiKey)
+	// where this account contributes just its password and the missing types are
+	// gracefully omitted.
+	leanAccountName := cfg.Name("lean")
+	leanAccountID, err := admin.createAccount(ctx, leanAccountName, assetID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating lean account: %w", err)
+	}
+	admin.deferCleanup(fmt.Sprintf("account %q (id %d)", leanAccountName, leanAccountID), func(ctx context.Context) error {
+		return admin.delete(ctx, fmt.Sprintf("AssetAccounts/%d", leanAccountID))
+	})
+	leanPassword, err := randomPassword()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = admin.setPassword(ctx, fmt.Sprintf("AssetAccounts/%d/Password", leanAccountID), leanPassword); err != nil {
+		return nil, nil, fmt.Errorf("setting lean account password: %w", err)
+	}
+
 	// Step 5: trust the client CA.
 	trustedID, err := admin.uploadTrustedCertificate(ctx, base64.StdEncoding.EncodeToString(pki.CACertDER))
 	if err != nil {
@@ -229,6 +258,9 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 	if err = admin.addRetrievableAccount(ctx, registrationID, accountID); err != nil {
 		return nil, nil, fmt.Errorf("adding retrievable account: %w", err)
 	}
+	if err = admin.addRetrievableAccount(ctx, registrationID, leanAccountID); err != nil {
+		return nil, nil, fmt.Errorf("adding lean retrievable account: %w", err)
+	}
 
 	fixture = &Fixture{
 		AppName:              appName,
@@ -238,6 +270,8 @@ func ProvisionA2AFixture(ctx context.Context, cfg *Config) (fixture *Fixture, te
 		ExpectedPublicKey:    publicAuthorizedKey,
 		ExpectedClientID:     apiKeyClientID,
 		ExpectedClientSecret: apiKeyClientSecret,
+		LeanAccountName:      leanAccountName,
+		LeanExpectedPassword: leanPassword,
 	}
 	return fixture, doTeardown, nil
 }

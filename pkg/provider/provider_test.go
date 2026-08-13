@@ -28,8 +28,12 @@ type testAccount struct {
 	accountName string
 	apiKey      string
 	password    string
+	// privateKey is returned for a PrivateKey retrieval. When empty, the fake
+	// returns an empty value (not an error), mirroring how the appliance reports
+	// an account that simply does not carry an SSH key.
+	privateKey string
 	// failCredential, when true, makes the Credentials endpoint return 500 for
-	// this account's API key.
+	// every object type of this account's API key.
 	failCredential bool
 }
 
@@ -88,7 +92,19 @@ func newFakeAppliance(t *testing.T, accounts []testAccount) *httptest.Server {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			writeJSON(w, acct.password)
+			switch r.URL.Query().Get("type") {
+			case "PrivateKey":
+				// An account that carries no SSH key: the appliance returns an
+				// empty value (not an error), which the provider treats as an
+				// absent type and omits from a bundle.
+				writeJSON(w, acct.privateKey)
+			case "ApiKey":
+				// Not populated by these tests; an account with no API keys is
+				// reported as an empty list, again treated as absent.
+				writeJSON(w, []any{})
+			default:
+				writeJSON(w, acct.password)
+			}
 
 		default:
 			http.NotFound(w, r)
@@ -478,5 +494,70 @@ func TestMountBundleFormat(t *testing.T) {
 	}
 	if len(versions) != 2 {
 		t.Fatalf("expected 2 version entries, got %d", len(versions))
+	}
+}
+
+// TestMountBundlePartialAccountOmitsMissingType proves a heterogeneous setup: two
+// accounts share a bundle mount requesting Password and PrivateKey, but only one
+// account carries a private key. The lean account must still mount, contributing
+// just its password, while the missing type is omitted rather than failing the
+// whole mount.
+func TestMountBundlePartialAccountOmitsMissingType(t *testing.T) {
+	accounts := []testAccount{
+		{regID: 1, appName: "app1", accountID: 10, accountName: "full", apiKey: "key-10", password: "pw-10", privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nfull\n-----END OPENSSH PRIVATE KEY-----\n"},
+		{regID: 1, appName: "app1", accountID: 11, accountName: "lean", apiKey: "key-11", password: "pw-11"},
+	}
+	server := newFakeAppliance(t, accounts)
+
+	attrib := baseAttrib(t, server, "app1")
+	attrib["outputFormat"] = "bundle"
+	attrib["objectTypes"] = "Password,PrivateKey"
+
+	p := NewProvider()
+	files, _, err := p.MountSecretsStoreObjectContent(
+		context.Background(), attrib, clientCertSecrets(t), "/tmp/target", os.FileMode(0o644))
+	if err != nil {
+		t.Fatalf("mount returned error: %v", err)
+	}
+	raw, ok := files["secrets.json"]
+	if !ok {
+		t.Fatalf("expected secrets.json, got %v", files)
+	}
+	var got map[string]struct {
+		Password   *string `json:"password"`
+		PrivateKey *string `json:"privateKey"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("bundle is not valid JSON: %v", err)
+	}
+
+	// The full account carries both requested types.
+	full, ok := got["full"]
+	if !ok {
+		t.Fatalf("bundle missing full account: %s", raw)
+	}
+	if full.Password == nil || *full.Password != "pw-10" {
+		t.Fatalf("full account password missing/wrong: %s", raw)
+	}
+	if full.PrivateKey == nil {
+		t.Fatalf("full account privateKey missing: %s", raw)
+	}
+
+	// The lean account mounts with only its password; the absent private key is
+	// omitted, not an error.
+	lean, ok := got["lean"]
+	if !ok {
+		t.Fatalf("bundle missing lean account: %s", raw)
+	}
+	if lean.Password == nil || *lean.Password != "pw-11" {
+		t.Fatalf("lean account password missing/wrong: %s", raw)
+	}
+	if lean.PrivateKey != nil {
+		t.Fatalf("lean account should omit privateKey, got %q", *lean.PrivateKey)
+	}
+
+	// The raw JSON must not carry a privateKey key for the lean account.
+	if strings.Contains(string(raw), `"lean":{"password":"pw-11","privateKey"`) {
+		t.Fatalf("lean account privateKey should be omitted from JSON: %s", raw)
 	}
 }

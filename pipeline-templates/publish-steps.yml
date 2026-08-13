@@ -1,0 +1,98 @@
+# Publish steps: fetch the GitHub token, log in to ghcr.io, build the multi-arch
+# image (linux/amd64, linux/arm64, windows/amd64 nanoserver) with the repo's
+# existing Makefile machinery, push a single manifest list, move :latest, and cut
+# a GitHub Release. This template runs only on v* tag builds (gated by the calling
+# job), so it always publishes a tagged release.
+#
+# The windows.Dockerfile is COPY-only (no RUN) and uses the servercore-cache
+# trick, so buildx builds every platform — including windows/amd64 — on this
+# single Linux agent. No separate Windows agent is required for this image.
+parameters:
+  keyVaultServiceConnection: 'SafeguardOpenSource'
+  keyVaultName: 'SafeguardBuildSecrets'
+  gitHubTokenSecret: 'GitHubPackagesToken'
+  gitHubReleaseConnection: 'PangaeaBuild-GitHub'
+  repositoryName: 'OneIdentity/safeguard-csi-provider'
+  # Newer buildkit than the Makefile default, for reliable windows/amd64 export.
+  buildkitVersion: 'v0.13.2'
+
+steps:
+- task: AzureKeyVault@2
+  inputs:
+    azureSubscription: '${{ parameters.keyVaultServiceConnection }}'
+    KeyVaultName: '${{ parameters.keyVaultName }}'
+    SecretsFilter: '${{ parameters.gitHubTokenSecret }}'
+  displayName: 'Get GitHub token from Azure Key Vault'
+
+# Derive the published version from the tag ref (refs/tags/vX.Y.Z -> X.Y.Z).
+- script: |
+    set -euo pipefail
+    TAG="${BRANCH#refs/tags/}"
+    IMAGE_VERSION="${TAG#v}"
+    echo "Publishing image version: $IMAGE_VERSION"
+    echo "##vso[task.setvariable variable=imageVersion]$IMAGE_VERSION"
+  env:
+    BRANCH: $(Build.SourceBranch)
+  displayName: 'Compute image version'
+
+- script: echo "$(${{ parameters.gitHubTokenSecret }})" | docker login ghcr.io -u OneIdentity --password-stdin
+  displayName: 'Login to ghcr.io'
+
+# Register QEMU emulators so buildx can build linux/arm64 on this amd64 agent.
+- script: docker run --privileged --rm tonistiigi/binfmt --install all
+  displayName: 'Set up QEMU/binfmt for cross-arch builds'
+
+# Package the Helm chart and render a standalone install manifest, both stamped
+# with the release version, so the GitHub Release carries install artifacts that
+# match the published image by construction (no hand-edited version to drift).
+- script: |
+    set -euo pipefail
+    VER='$(imageVersion)'
+    OUT='$(Build.ArtifactStagingDirectory)'
+    helm package charts/safeguard-csi-provider \
+      --version "$VER" --app-version "$VER" \
+      --destination "$OUT"
+    helm template safeguard-csi-provider charts/safeguard-csi-provider \
+      --namespace kube-system \
+      --set linux.image.tag="$VER" \
+      --set windows.image.tag="$VER" \
+      > "$OUT/safeguard-csi-provider-$VER.yaml"
+    ls -l "$OUT"
+  displayName: 'Package Helm chart and render install manifest'
+
+# Build every OS/arch image and push the annotated manifest list, reusing the
+# Makefile's container-all + push-manifest targets against ghcr.io.
+- script: |
+    set -euo pipefail
+    make container-all push-manifest \
+      REGISTRY='$(imageRegistry)' \
+      IMAGE_NAME='$(imageName)' \
+      IMAGE_VERSION='$(imageVersion)' \
+      OUTPUT_TYPE=registry \
+      BUILDKIT_VERSION='${{ parameters.buildkitVersion }}'
+  displayName: 'Build and push multi-arch image'
+
+- script: |
+    set -euo pipefail
+    docker buildx imagetools create \
+      --tag '$(imageRegistry)/$(imageName):latest' \
+      '$(imageRegistry)/$(imageName):$(imageVersion)'
+    docker buildx imagetools inspect '$(imageRegistry)/$(imageName):latest'
+  displayName: 'Update :latest tag'
+  condition: succeeded()
+
+- task: GitHubRelease@1
+  inputs:
+    gitHubConnection: '${{ parameters.gitHubReleaseConnection }}'
+    repositoryName: '${{ parameters.repositoryName }}'
+    action: 'create'
+    target: '$(Build.SourceVersion)'
+    tagSource: 'gitTag'
+    title: '$(imageVersion)'
+    isPreRelease: false
+    changeLogCompareToRelease: 'lastFullRelease'
+    changeLogType: 'commitBased'
+    assets: '$(Build.ArtifactStagingDirectory)/*'
+    assetUploadMode: 'replace'
+  displayName: 'Create GitHub release'
+  condition: succeeded()

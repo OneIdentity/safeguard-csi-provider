@@ -88,7 +88,13 @@ func main() {
 	grpc_health_v1.RegisterHealthServer(s, csiDriverProviderServer)
 
 	klog.InfoS("Listening for connections", "address", listener.Addr())
-	go s.Serve(listener)
+	go func() {
+		// Serve returns ErrServerStopped on GracefulStop; log anything else so a
+		// failed listener does not die silently.
+		if err := s.Serve(listener); err != nil && err != grpc.ErrServerStopped {
+			klog.ErrorS(err, "gRPC server stopped serving")
+		}
+	}()
 
 	healthz := &server.HealthZ{
 		HealthCheckURL: &url.URL{

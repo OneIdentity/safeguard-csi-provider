@@ -30,7 +30,7 @@ spec:
       hostNetwork: true
       containers:
         - name: provider-safeguard-installer
-          image: "{{ .Values.linux.image.repository }}:{{ .Values.linux.image.tag }}"
+          image: "{{ .Values.linux.image.repository }}:{{ .Values.linux.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.linux.image.pullPolicy }}
           args:
             - --endpoint=unix:///provider/safeguard.sock

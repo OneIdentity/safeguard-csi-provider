@@ -93,6 +93,31 @@ file contents depend on `objectType`:
 If two registrations expose accounts with the same name and `appName` is empty,
 they map to the same file name; set `appName` or `accountNames` to disambiguate.
 
+A complete file-per-account `SecretProviderClass` that mounts each matched
+account's password as its own file:
+
+```yaml
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: safeguard-files
+spec:
+  provider: safeguard
+  parameters:
+    safeguardHost: safeguard.example.com
+    appName: my-application
+    accountNames: db-admin,svc-account
+    outputFormat: file-per-account   # the default; shown here for clarity
+    objectType: Password
+    safeguardCaBundle: |
+      -----BEGIN CERTIFICATE-----
+      ...appliance issuing CA...
+      -----END CERTIFICATE-----
+```
+
+This mounts `db-admin` and `svc-account` as two files, each containing that
+account's plaintext password.
+
 ### Bundle (`outputFormat: bundle`)
 
 Bundle mode writes a **single JSON file** (`bundleFile`, default `secrets.json`)
@@ -102,33 +127,57 @@ lets a workload read multiple accounts and credential types in one read, while
 still keeping everything in tmpfs and nothing in etcd.
 
 ```yaml
-parameters:
-  safeguardHost: safeguard.example.com
-  appName: my-application
-  accountNames: db-admin,svc-account
-  outputFormat: bundle
-  objectTypes: Password,PrivateKey,ApiKey
-  keyFormat: OpenSsh
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: safeguard-bundle
+spec:
+  provider: safeguard
+  parameters:
+    safeguardHost: safeguard.example.com
+    appName: my-application
+    accountNames: db-admin,svc-account
+    outputFormat: bundle
+    objectTypes: Password,PrivateKey,ApiKey
+    bundleFile: secrets.json
+    keyFormat: OpenSsh
+    safeguardCaBundle: |
+      -----BEGIN CERTIFICATE-----
+      ...appliance issuing CA...
+      -----END CERTIFICATE-----
 ```
 
-Produces `secrets.json`:
+Produces `secrets.json`. Each account carries only the credential types it
+actually has — an account that has no SSH key or API key simply omits those
+fields, and the mount still succeeds. Below, `db-admin` carries all three types
+while `svc-account` has only a password:
 
 ```json
 {
   "db-admin": {
-    "password": "…",
-    "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n",
-    "apiKey": [ { "clientId": "…", "clientSecret": "…", "…": "…" } ]
+    "password": "S0me-R0tated-P@ssw0rd",
+    "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB\n...\n-----END OPENSSH PRIVATE KEY-----\n",
+    "apiKey": [
+      {
+        "id": 42,
+        "name": "db-admin-api",
+        "description": "",
+        "clientId": "a1b2c3d4-0000-1111-2222-334455667788",
+        "clientSecret": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        "clientSecretId": "b7c8d9e0-aaaa-bbbb-cccc-ddeeff001122"
+      }
+    ]
   },
   "svc-account": {
-    "password": "…"
+    "password": "an0ther-r0tated-secret"
   }
 }
 ```
 
 Only the credential types actually present for an account are emitted (missing
-types are omitted). `privateKey` line endings are normalized to LF; `apiKey`
-nests as structured JSON rather than an escaped string.
+types are omitted, as shown for `svc-account`). `privateKey` line endings are
+normalized to LF (`\n`); `apiKey` nests as structured JSON rather than an escaped
+string.
 
 ### Line-ending normalization
 

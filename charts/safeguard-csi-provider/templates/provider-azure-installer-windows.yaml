@@ -29,7 +29,7 @@ spec:
       serviceAccountName: safeguard-csi-provider
       containers:
         - name: provider-safeguard-installer
-          image: "{{ .Values.windows.image.repository }}:{{ .Values.windows.image.tag }}"
+          image: "{{ .Values.windows.image.repository }}:{{ .Values.windows.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.windows.image.pullPolicy }}
           args:
             - --endpoint=unix://C:\\provider\\safeguard.sock

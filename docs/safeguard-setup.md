@@ -12,19 +12,32 @@ performed by a Safeguard administrator in the SPP web console.
 
 ## Prerequisites
 
-- Administrator access to SPP (typically **Asset Administrator** and
-  **User Administrator** roles).
+- Administrator access to SPP. The steps below span several administrative
+  roles, so the person configuring this either holds all of them or coordinates
+  with whoever does:
+  - **User Administrator** — to create the certificate user (step 2).
+  - **Security Policy Administrator** — to create the A2A registration and add
+    its retrievable accounts (step 4).
+  - **Asset Administrator** — only needed to onboard the managed accounts whose
+    credentials you intend to retrieve (step 3); not required for the A2A wiring
+    itself.
+  - Uploading a trusted CA certificate (step 1) is an appliance-level setting and
+    is typically performed by an **Appliance Administrator**.
 - The target assets and accounts already onboarded and managed in SPP.
 - A client certificate **with its private key** for the provider's identity. The
   issuing CA must be trusted by SPP.
 
 ## 1. Trust the client certificate's issuing CA
 
+*(Requires **Appliance Administrator**.)*
+
 Upload the CA that issued your client certificate:
 
 **Settings → Security → Trusted CA Certificates → Add**
 
 ## 2. Create a certificate user
+
+*(Requires **User Administrator**.)*
 
 Create a user that SPP authenticates by certificate thumbprint:
 
@@ -35,10 +48,14 @@ must match the certificate the provider presents exactly.
 
 ## 3. Confirm the accounts are managed
 
+*(Requires **Asset Administrator**.)*
+
 Ensure the asset accounts whose passwords, SSH keys, or API keys you want to
 retrieve are onboarded as managed accounts in SPP.
 
 ## 4. Create the A2A registration
+
+*(Requires **Security Policy Administrator**.)*
 
 **External Integration → Application to Application → New Registration**
 

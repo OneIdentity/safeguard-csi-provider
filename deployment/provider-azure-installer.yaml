@@ -24,7 +24,7 @@ spec:
       hostNetwork: true
       containers:
         - name: provider-safeguard-installer
-          image: starlingdev.azurecr.io/oneidentity/secrets-store/provider-safeguard:v0.2.0
+          image: ghcr.io/oneidentity/safeguard-csi-provider:0.3.0
           imagePullPolicy: IfNotPresent
           args:
             - --endpoint=unix:///provider/safeguard.sock

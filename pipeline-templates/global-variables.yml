@@ -1,0 +1,16 @@
+# Pipeline-level variables shared by every job.
+variables:
+  # Pinned Go toolchain (matches go.mod's 1.21 line).
+  - name: goVersion
+    value: '1.21.13'
+
+  # golangci-lint release used by the lint step. Downloaded as a prebuilt release
+  # asset (not install.sh) to avoid GitHub API rate limits on shared agents.
+  - name: golangciLintVersion
+    value: '1.64.8'
+
+  # Public container registry and image path. ghcr paths must be lowercase.
+  - name: imageRegistry
+    value: 'ghcr.io/oneidentity'
+  - name: imageName
+    value: 'safeguard-csi-provider'
