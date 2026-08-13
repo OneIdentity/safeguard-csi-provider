@@ -1,7 +1,8 @@
 # Publish steps: fetch the GitHub token, log in to ghcr.io, build the multi-arch
 # image (linux/amd64, linux/arm64, windows/amd64 nanoserver) with the repo's
-# existing Makefile machinery, push a single manifest list, and cut a GitHub
-# Release on tag builds.
+# existing Makefile machinery, push a single manifest list, move :latest, and cut
+# a GitHub Release. This template runs only on v* tag builds (gated by the calling
+# job), so it always publishes a tagged release.
 #
 # The windows.Dockerfile is COPY-only (no RUN) and uses the servercore-cache
 # trick, so buildx builds every platform — including windows/amd64 — on this
@@ -23,23 +24,15 @@ steps:
     SecretsFilter: '${{ parameters.gitHubTokenSecret }}'
   displayName: 'Get GitHub token from Azure Key Vault'
 
-# Derive the image version and whether to move :latest. Tag builds (refs/tags/vX.Y.Z)
-# publish the bare version X.Y.Z and update :latest; every other build publishes a
-# dev-suffixed tag and leaves :latest untouched.
+# Derive the published version from the tag ref (refs/tags/vX.Y.Z -> X.Y.Z).
 - script: |
     set -euo pipefail
-    BRANCH="$(Build.SourceBranch)"
-    if [[ "$BRANCH" == refs/tags/* ]]; then
-      TAG="${BRANCH#refs/tags/}"
-      IMAGE_VERSION="${TAG#v}"
-      PUSH_LATEST=true
-    else
-      IMAGE_VERSION="$(semanticVersion)-dev.$(Build.BuildId)"
-      PUSH_LATEST=false
-    fi
-    echo "Resolved image version: $IMAGE_VERSION (pushLatest=$PUSH_LATEST)"
+    TAG="${BRANCH#refs/tags/}"
+    IMAGE_VERSION="${TAG#v}"
+    echo "Publishing image version: $IMAGE_VERSION"
     echo "##vso[task.setvariable variable=imageVersion]$IMAGE_VERSION"
-    echo "##vso[task.setvariable variable=pushLatest]$PUSH_LATEST"
+  env:
+    BRANCH: $(Build.SourceBranch)
   displayName: 'Compute image version'
 
 - script: echo "$(${{ parameters.gitHubTokenSecret }})" | docker login ghcr.io -u OneIdentity --password-stdin
@@ -68,7 +61,7 @@ steps:
       '$(imageRegistry)/$(imageName):$(imageVersion)'
     docker buildx imagetools inspect '$(imageRegistry)/$(imageName):latest'
   displayName: 'Update :latest tag'
-  condition: and(succeeded(), eq(variables['pushLatest'], 'true'))
+  condition: succeeded()
 
 - task: GitHubRelease@1
   inputs:
@@ -82,4 +75,4 @@ steps:
     changeLogCompareToRelease: 'lastFullRelease'
     changeLogType: 'commitBased'
   displayName: 'Create GitHub release'
-  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+  condition: succeeded()

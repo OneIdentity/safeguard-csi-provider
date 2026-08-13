@@ -1,17 +1,5 @@
 # Pipeline-level variables shared by every job.
-#
-# Azure Pipelines scoping pitfall: compile-time ${{ }} expressions can only see
-# variables defined in the SAME template file. Every variable that depends on
-# another (isPrerelease) is therefore computed here, alongside the variable it
-# references, and consumed elsewhere as an $(x) runtime macro. Boolean values are
-# the lowercase strings 'true'/'false' (not ${{ true }}, which renders as the
-# string 'True').
 variables:
-  # Base semantic version for non-tag (CI/dev) image tags. Tagged releases derive
-  # their version from the git tag instead (see compute-image-version).
-  - name: semanticVersion
-    value: '0.3.0'
-
   # Pinned Go toolchain (matches go.mod's 1.21 line).
   - name: goVersion
     value: '1.21.13'
@@ -26,14 +14,3 @@ variables:
     value: 'ghcr.io/oneidentity'
   - name: imageName
     value: 'safeguard-csi-provider'
-
-  # true only when the build was triggered by a v* tag.
-  - name: isTagBuild
-    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/') }}
-
-  # A tag build is a real release; anything else is a prerelease/dev build.
-  - name: isPrerelease
-    ${{ if startsWith(variables['Build.SourceBranch'], 'refs/tags/') }}:
-      value: 'false'
-    ${{ else }}:
-      value: 'true'

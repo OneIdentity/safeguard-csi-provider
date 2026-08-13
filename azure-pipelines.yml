@@ -1,8 +1,9 @@
 # Azure DevOps pipeline for safeguard-csi-provider.
 #
-# Pull requests run build/lint/test only. Merges to main/release-* and v* tags
-# additionally build the multi-arch image and push it to ghcr.io; v* tags also
-# cut a GitHub Release. Doc-only changes are excluded from triggering builds.
+# Every trigger (PRs, manual runs, and pushes to main/release-*) runs
+# build/lint/test only. Only a v* tag builds the multi-arch image, pushes it to
+# ghcr.io, moves :latest, and cuts a GitHub Release. Doc-only changes are
+# excluded from triggering builds.
 
 trigger:
   branches:
@@ -35,19 +36,19 @@ variables:
   - template: pipeline-templates/global-variables.yml
 
 jobs:
-  - job: PRValidation
-    displayName: 'PR validation (build, lint, test)'
-    condition: eq(variables['Build.Reason'], 'PullRequest')
+  - job: Validate
+    displayName: 'Build, lint, and test'
     pool:
       vmImage: 'ubuntu-latest'
     steps:
       - template: pipeline-templates/go-ci-steps.yml
 
-  - job: BuildAndPublish
-    displayName: 'Build, test, and publish image'
-    condition: ne(variables['Build.Reason'], 'PullRequest')
+  - job: Publish
+    displayName: 'Publish tagged release image'
+    dependsOn: Validate
+    # Publish only on a v* tag. Manual runs and branch/PR builds never push.
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-      - template: pipeline-templates/go-ci-steps.yml
       - template: pipeline-templates/publish-steps.yml
