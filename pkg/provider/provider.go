@@ -88,7 +88,11 @@ func (p *Provider) MountSecretsStoreObjectContent(ctx context.Context, attrib ma
 
 		cred, err := retrieveCredential(ctx, a2a, account, out.objectTypes[0], out.keyFormat)
 		if err != nil {
-			klog.Errorf("Could not fetch secret %s because %s", account.AccountName, err.Error())
+			// In file-per-account mode a miss means this account produces no
+			// file at all, so surface it at Warning: it may be an expected
+			// "credential type not available for this account", but it may also
+			// be a genuine retrieval failure worth investigating.
+			klog.Warningf("Could not fetch secret %s because %s", account.AccountName, err.Error())
 			continue
 		}
 
@@ -315,14 +319,20 @@ type accountBundle struct {
 }
 
 // retrieveAccountBundle fetches each requested object type for a single account
-// and assembles them into an accountBundle. A failure to retrieve one type is
-// logged and that type is omitted, so a partial bundle is still returned.
+// and assembles them into an accountBundle. Accounts are commonly heterogeneous:
+// a given account may carry only a password while the mount requests several
+// types, so a per-type miss is expected rather than exceptional. A failed or
+// absent type is logged at an informational level and omitted (the struct fields
+// use omitempty), so a partial bundle is still returned and the mount succeeds.
 func retrieveAccountBundle(ctx context.Context, a2a *safeguard.A2AContext, account safeguard.A2ARetrievableAccount, objectTypes []string, keyFormat safeguard.KeyFormat) accountBundle {
 	var bundle accountBundle
 	for _, objectType := range objectTypes {
 		cred, err := retrieveCredential(ctx, a2a, account, objectType, keyFormat)
 		if err != nil {
-			klog.Errorf("Could not fetch %s for %s because %s", objectType, account.AccountName, err.Error())
+			// Expected miss: this account simply does not carry this type. Log
+			// for awareness at info, not error, so a normal heterogeneous setup
+			// does not trip error-based alerting.
+			klog.Infof("Skipping %s for %s: not available (%s)", objectType, account.AccountName, err.Error())
 			continue
 		}
 		switch objectType {

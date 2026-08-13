@@ -169,6 +169,18 @@ make unit-test      # run unit tests
 make container      # build the container image
 ```
 
+Released images are published to
+`ghcr.io/oneidentity/safeguard-csi-provider` as a single multi-arch manifest
+covering `linux/amd64`, `linux/arm64`, and `windows/amd64` (nanoserver).
+
+## Releasing
+
+Releases are built and published by the Azure DevOps pipeline
+([`azure-pipelines.yml`](./azure-pipelines.yml)). Pushing a `vX.Y.Z` tag builds
+the multi-arch image, pushes `ghcr.io/oneidentity/safeguard-csi-provider:X.Y.Z`
+(and moves `:latest`), and creates the corresponding GitHub Release. Merges to
+`main` publish a `dev`-suffixed image for testing but do not cut a release.
+
 ## Development
 
 ```bash

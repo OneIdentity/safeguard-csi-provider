@@ -1,0 +1,47 @@
+# Go build/lint/test steps, shared by the PR-validation job and used as the gate
+# before publishing. Mirrors the safeguard-go CI pattern.
+parameters:
+  goVersion: '$(goVersion)'
+  golangciLintVersion: '$(golangciLintVersion)'
+
+steps:
+- checkout: self
+  clean: true
+
+- task: GoTool@0
+  displayName: 'Use Go ${{ parameters.goVersion }}'
+  inputs:
+    version: '${{ parameters.goVersion }}'
+
+- script: |
+    go version
+    go env GOPATH GOMOD GOCACHE
+  displayName: 'Show Go environment'
+
+- script: go build ./...
+  displayName: 'Build'
+
+- script: |
+    files=`gofmt -l .`
+    if [ -n "$files" ]; then
+      echo "gofmt required for:"
+      echo "$files"
+      exit 1
+    fi
+  displayName: 'Check gofmt'
+
+- script: go vet ./...
+  displayName: 'Vet'
+
+- script: |
+    set -euo pipefail
+    # Download the prebuilt binary straight from the release asset rather than
+    # piping install.sh, whose anonymous GitHub API version lookup is rate
+    # limited (60/hour/IP) and fails intermittently on shared hosted agents.
+    curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v${{ parameters.golangciLintVersion }}/golangci-lint-${{ parameters.golangciLintVersion }}-linux-amd64.tar.gz" -o /tmp/golangci-lint.tar.gz
+    tar -xzf /tmp/golangci-lint.tar.gz -C /tmp
+    "/tmp/golangci-lint-${{ parameters.golangciLintVersion }}-linux-amd64/golangci-lint" run --timeout=5m
+  displayName: 'Lint with golangci-lint'
+
+- script: go test -race ./...
+  displayName: 'Run race-enabled unit tests'

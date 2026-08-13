@@ -11,8 +11,8 @@ logVerbosity: 0
 
 linux:
   image:
-    repository: starlingdev.azurecr.io/oneidentity/secrets-store/provider-safeguard
-    tag: v0.2.0
+    repository: ghcr.io/oneidentity/safeguard-csi-provider
+    tag: v0.3.0
     pullPolicy: IfNotPresent
   nodeSelector: {}
   tolerations: []
@@ -50,8 +50,8 @@ linux:
 
 windows:
   image:
-    repository: starlingdev.azurecr.io/oneidentity/secrets-store/provider-safeguard
-    tag: v0.2.0
+    repository: ghcr.io/oneidentity/safeguard-csi-provider
+    tag: v0.3.0
     pullPolicy: IfNotPresent
   nodeSelector: {}
   tolerations:

@@ -129,6 +129,124 @@ func TestE2EMount(t *testing.T) {
 		assertSSHKey(t, []byte(*entry.PrivateKey), fixture)
 		assertAPIKey(t, entry.APIKey, fixture)
 	})
+
+	t.Run("BundleHeterogeneous", func(t *testing.T) {
+		pod := "consumer-bundle-mixed"
+		kc.mustApply(ctx, heterogeneousBundleManifests(namespace, pod, cfg, fixture, insecure))
+		waitForPod(ctx, t, kc, namespace, pod)
+
+		raw := []byte(catMount(ctx, t, kc, namespace, pod, "/mnt/bundle/secrets.json"))
+		var got map[string]struct {
+			Password   *string         `json:"password"`
+			PrivateKey *string         `json:"privateKey"`
+			APIKey     json.RawMessage `json:"apiKey"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("bundle is not valid JSON: %v\n%s", err, raw)
+		}
+
+		// The full account carries all three requested types.
+		full, ok := got[fixture.AccountName]
+		if !ok {
+			t.Fatalf("bundle missing full account %q: %s", fixture.AccountName, raw)
+		}
+		if full.Password == nil || *full.Password != fixture.ExpectedPassword {
+			t.Fatalf("full account password does not match the provisioned value")
+		}
+		if full.PrivateKey == nil {
+			t.Fatalf("full account missing privateKey: %s", raw)
+		}
+		assertSSHKey(t, []byte(*full.PrivateKey), fixture)
+		assertAPIKey(t, full.APIKey, fixture)
+
+		// The lean account carries only a password; the private key and API key
+		// it does not have are omitted, and the mount still succeeds.
+		lean, ok := got[fixture.LeanAccountName]
+		if !ok {
+			t.Fatalf("bundle missing lean account %q: %s", fixture.LeanAccountName, raw)
+		}
+		if lean.Password == nil || *lean.Password != fixture.LeanExpectedPassword {
+			t.Fatalf("lean account password does not match the provisioned value")
+		}
+		if lean.PrivateKey != nil {
+			t.Fatalf("lean account should omit privateKey, got a value: %s", raw)
+		}
+		if lean.APIKey != nil {
+			t.Fatalf("lean account should omit apiKey, got a value: %s", raw)
+		}
+
+		// The expected per-type miss for the lean account must not be logged at
+		// ERROR severity: a normal heterogeneous mount should not trip
+		// error-based alerting.
+		assertNoErrorLogForAccount(ctx, t, kc, fixture.LeanAccountName)
+	})
+}
+
+// heterogeneousBundleManifests renders a bundle-mode SecretProviderClass that
+// mounts both the full account (all three credential types) and the lean account
+// (password only), requesting all three object types, plus a pod that mounts the
+// consolidated JSON file.
+func heterogeneousBundleManifests(namespace, pod string, cfg *harness.Config, fixture *harness.Fixture, insecure string) string {
+	accountNames := fixture.AccountName + "," + fixture.LeanAccountName
+	spc := fmt.Sprintf(`---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: spc-bundle-mixed
+  namespace: %[1]s
+spec:
+  provider: safeguard
+  parameters:
+    safeguardHost: %[2]s
+    appName: %[3]s
+    accountNames: %[4]s
+    insecureSkipVerify: %[5]q
+    outputFormat: bundle
+    objectTypes: Password,PrivateKey,ApiKey
+    keyFormat: OpenSsh
+`, namespace, cfg.Host, fixture.AppName, accountNames, insecure)
+
+	podManifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  restartPolicy: Never
+  containers:
+    - name: consumer
+      image: registry.k8s.io/e2e-test-images/busybox:1.29-4
+      command: ["/bin/sh", "-c", "sleep 3600"]
+      volumeMounts:
+        - name: bundle
+          mountPath: /mnt/bundle
+          readOnly: true
+  volumes:
+%[3]s`,
+		pod, namespace, csiVolume("bundle", "spc-bundle-mixed"))
+
+	return spc + podManifest
+}
+
+// assertNoErrorLogForAccount fails if the provider logged an ERROR-severity line
+// mentioning the account. klog prefixes error lines with 'E', so a mount that
+// merely skipped an unavailable credential type (logged at info) must not produce
+// any 'E...account' line.
+func assertNoErrorLogForAccount(ctx context.Context, t *testing.T, kc *kubectl, account string) {
+	t.Helper()
+	out, err := kc.run(ctx, nil, "logs", "--namespace", "kube-system",
+		"-l", "app=safeguard-csi-provider", "--tail=-1")
+	if err != nil {
+		t.Logf("could not read provider logs to assert severity (non-fatal): %v", err)
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "E") && strings.Contains(trimmed, account) {
+			t.Fatalf("provider logged an ERROR-level line for the expected miss on %q: %s", account, trimmed)
+		}
+	}
 }
 
 // assertSSHKey verifies the mounted bytes parse as a usable SSH private key and

@@ -157,9 +157,27 @@ account name, carrying every credential type in `objectTypes`:
 ```
 
 This produces one `secrets.json` (one file, one inotify watch) instead of many
-files, while still keeping everything in tmpfs and nothing in etcd. See the
+files, while still keeping everything in tmpfs and nothing in etcd. Each account
+carries only the credential types it actually has; a missing type is omitted and
+the mount still succeeds. For example, a `db-admin` with all three types
+alongside a password-only `svc-account` renders as:
+
+```json
+{
+  "db-admin": {
+    "password": "S0me-R0tated-P@ssw0rd",
+    "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----\n",
+    "apiKey": [ { "id": 42, "name": "db-admin-api", "clientId": "...", "clientSecret": "...", "clientSecretId": "..." } ]
+  },
+  "svc-account": {
+    "password": "an0ther-r0tated-secret"
+  }
+}
+```
+
+See the
 [configuration reference](./configuration.md#bundle-outputformat-bundle) for the
-JSON shape.
+full JSON shape and field list.
 
 ## Next steps
 
