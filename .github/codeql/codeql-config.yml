@@ -1,0 +1,14 @@
+name: "safeguard-csi-provider CodeQL config"
+
+# The provider exposes an `insecureSkipVerify` configuration parameter
+# that sets `InsecureSkipVerify: true` on the underlying TLS config when
+# connecting to a Safeguard appliance. This is an intentional,
+# documented, operator-controlled capability for bootstrapping and
+# development against appliances that do not yet have a CA-signed
+# certificate installed (e.g. brand-new or self-signed test appliances),
+# and is explicitly not for production use. Because this pattern is
+# deliberate and accepted for this repository, the
+# `go/disabled-certificate-check` query is excluded from code scanning.
+query-filters:
+  - exclude:
+      id: go/disabled-certificate-check
