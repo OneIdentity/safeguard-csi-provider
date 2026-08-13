@@ -28,9 +28,9 @@ type testAccount struct {
 	accountName string
 	apiKey      string
 	password    string
-	// privateKey, when non-empty, is returned for a PrivateKey retrieval. When
-	// empty, a PrivateKey retrieval returns 500, standing in for an account that
-	// simply does not carry that credential type.
+	// privateKey is returned for a PrivateKey retrieval. When empty, the fake
+	// returns an empty value (not an error), mirroring how the appliance reports
+	// an account that simply does not carry an SSH key.
 	privateKey string
 	// failCredential, when true, makes the Credentials endpoint return 500 for
 	// every object type of this account's API key.
@@ -94,16 +94,14 @@ func newFakeAppliance(t *testing.T, accounts []testAccount) *httptest.Server {
 			}
 			switch r.URL.Query().Get("type") {
 			case "PrivateKey":
-				// An account that carries no SSH key: the appliance rejects the
-				// retrieval, exercising the graceful per-type miss path.
-				if acct.privateKey == "" {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
+				// An account that carries no SSH key: the appliance returns an
+				// empty value (not an error), which the provider treats as an
+				// absent type and omits from a bundle.
 				writeJSON(w, acct.privateKey)
 			case "ApiKey":
-				// Not populated by these tests; represent as absent.
-				w.WriteHeader(http.StatusInternalServerError)
+				// Not populated by these tests; an account with no API keys is
+				// reported as an empty list, again treated as absent.
+				writeJSON(w, []any{})
 			default:
 				writeJSON(w, acct.password)
 			}

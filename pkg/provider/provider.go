@@ -311,7 +311,8 @@ func parseKeyFormat(raw string) (safeguard.KeyFormat, error) {
 }
 
 // accountBundle is one account's entry in a consolidated JSON bundle. Only the
-// requested object types are populated; the rest are omitted.
+// credential types the account actually carries are populated; a requested type
+// the account lacks is omitted rather than emitted as an empty value.
 type accountBundle struct {
 	Password   *string         `json:"password,omitempty"`
 	PrivateKey *string         `json:"privateKey,omitempty"`
@@ -319,20 +320,25 @@ type accountBundle struct {
 }
 
 // retrieveAccountBundle fetches each requested object type for a single account
-// and assembles them into an accountBundle. Accounts are commonly heterogeneous:
-// a given account may carry only a password while the mount requests several
-// types, so a per-type miss is expected rather than exceptional. A failed or
-// absent type is logged at an informational level and omitted (the struct fields
-// use omitempty), so a partial bundle is still returned and the mount succeeds.
+// and assembles the ones it carries into an accountBundle. Accounts are commonly
+// heterogeneous: a mount may request several types while a given account carries
+// only one. The appliance reports a type the account lacks as an empty value (an
+// empty private key, or an empty API-key list) rather than an error, so an empty
+// result is treated as "not present" and omitted from the bundle. A partial
+// bundle is still returned and the mount succeeds. An expected miss is logged at
+// info for awareness; only a genuine retrieval failure (auth, network, appliance)
+// is logged at warning, so a normal heterogeneous setup does not trip
+// error-based alerting.
 func retrieveAccountBundle(ctx context.Context, a2a *safeguard.A2AContext, account safeguard.A2ARetrievableAccount, objectTypes []string, keyFormat safeguard.KeyFormat) accountBundle {
 	var bundle accountBundle
 	for _, objectType := range objectTypes {
 		cred, err := retrieveCredential(ctx, a2a, account, objectType, keyFormat)
 		if err != nil {
-			// Expected miss: this account simply does not carry this type. Log
-			// for awareness at info, not error, so a normal heterogeneous setup
-			// does not trip error-based alerting.
-			klog.Infof("Skipping %s for %s: not available (%s)", objectType, account.AccountName, err.Error())
+			klog.Warningf("Could not fetch %s for %s: %s", objectType, account.AccountName, err.Error())
+			continue
+		}
+		if bundleCredentialAbsent(objectType, cred) {
+			klog.Infof("Account %s does not carry %s; omitting it from the bundle", account.AccountName, objectType)
 			continue
 		}
 		switch objectType {
@@ -347,6 +353,21 @@ func retrieveAccountBundle(ctx context.Context, a2a *safeguard.A2AContext, accou
 		}
 	}
 	return bundle
+}
+
+// bundleCredentialAbsent reports whether a retrieved credential value means the
+// account does not carry the requested type. The appliance returns an empty
+// value for an absent password or private key and an empty JSON array for an
+// account with no API keys.
+func bundleCredentialAbsent(objectType string, cred []byte) bool {
+	trimmed := bytes.TrimSpace(cred)
+	if len(trimmed) == 0 {
+		return true
+	}
+	if objectType == "ApiKey" {
+		return string(trimmed) == "[]"
+	}
+	return false
 }
 
 // retrieveCredential fetches the credential for a single account in the requested
