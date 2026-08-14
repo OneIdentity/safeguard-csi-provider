@@ -86,11 +86,19 @@ build-darwin:
 container: build
 	docker build --no-cache --build-arg ARCH=$(ARCH) -t $(IMAGE_TAG) -f Dockerfile .
 
+# Per-architecture images are composed into a multi-arch manifest by the
+# push-manifest target below using `docker manifest create`. Modern BuildKit
+# attaches provenance/SBOM attestations by default, which turns each per-arch
+# tag into an image index (manifest list); `docker manifest create` then fails
+# with "<tag> is a manifest list" because it cannot nest a list inside a list.
+# Disabling both attestations keeps each per-arch tag a single image manifest.
 .PHONY: container-linux
 container-linux: docker-buildx-builder
 	docker buildx build \
 			--no-cache \
 			--output=type=$(OUTPUT_TYPE) \
+			--provenance=false \
+			--sbom=false \
 			--platform="linux/$(ARCH)" \
 			--build-arg ARCH=$(ARCH) \
 			-t $(IMAGE_TAG)-linux-$(ARCH) -f Dockerfile .
@@ -100,6 +108,8 @@ container-windows: docker-buildx-builder
 	docker buildx build \
 			--no-cache \
 			--output=type=$(OUTPUT_TYPE) \
+			--provenance=false \
+			--sbom=false \
 			--platform="windows/amd64" \
 			--build-arg ARCH=$(ARCH) \
 			--build-arg OSVERSION=$(OSVERSION) \
