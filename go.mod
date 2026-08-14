@@ -4,18 +4,18 @@ go 1.21
 
 require (
 	github.com/OneIdentity/safeguard-go v0.9.0
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.31.0
 	google.golang.org/grpc v1.38.0
 	k8s.io/component-base v0.22.0
-	k8s.io/klog/v2 v2.9.0
+	k8s.io/klog/v2 v2.140.0
 	sigs.k8s.io/secrets-store-csi-driver v0.3.0
 )
 
 require (
 	github.com/coder/websocket v1.8.13 // indirect
-	github.com/go-logr/logr v0.4.0 // indirect
+	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
