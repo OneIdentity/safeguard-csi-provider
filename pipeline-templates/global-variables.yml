@@ -1,8 +1,8 @@
 # Pipeline-level variables shared by every job.
 variables:
-  # Pinned Go toolchain (matches go.mod's 1.21 line).
+  # Pinned Go toolchain (matches go.mod's go directive).
   - name: goVersion
-    value: '1.21.13'
+    value: '1.25.9'
 
   # golangci-lint release used by the lint step. Downloaded as a prebuilt release
   # asset (not install.sh) to avoid GitHub API rate limits on shared agents.

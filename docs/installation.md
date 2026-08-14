@@ -18,8 +18,8 @@ separately.
 
 | Component | Version |
 | --- | --- |
-| Go (build) | 1.21+ |
-| Secrets Store CSI Driver | 0.3.0+ |
+| Go (build) | 1.25+ |
+| Secrets Store CSI Driver | 1.6.0+ |
 | CSI provider protocol | `v1alpha1` |
 | safeguard-go SDK | v0.9.0 |
 

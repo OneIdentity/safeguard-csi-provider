@@ -12,7 +12,7 @@ provider for One Identity Safeguard for Privileged Passwords.
 
 ## Prerequisites
 
-- [Go 1.21](https://go.dev/dl/) or later.
+- [Go 1.25](https://go.dev/dl/) or later.
 - [Docker](https://docs.docker.com/get-docker/) (with Buildx) to build
   container images.
 - For the end-to-end tests: [kind](https://kind.sigs.k8s.io/) and

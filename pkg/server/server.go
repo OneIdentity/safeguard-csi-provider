@@ -21,6 +21,7 @@ import (
 // CSIDriverProviderServer providers a Secrets Store CSI Driver provider implementation
 type CSIDriverProviderServer struct {
 	*grpc.Server
+	grpc_health_v1.UnimplementedHealthServer
 	Provider *provider.Provider
 }
 
