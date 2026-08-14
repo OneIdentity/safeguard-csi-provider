@@ -1,7 +1,7 @@
 apiVersion: v2
 name: safeguard-csi-provider
-version: 0.3.0
-appVersion: 0.3.0
+version: 0.3.1
+appVersion: 0.3.1
 kubeVersion: ">=1.16.0-0"
 description: A Helm chart to install the Secrets Store CSI Driver inside a Kubernetes cluster.
 sources:
