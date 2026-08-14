@@ -11,17 +11,12 @@
 # separate planning cycle (semantic-import versioning for Go means a
 # major bump changes the module import path).
 #
-# The main module intentionally pins `go 1.21` (see go.mod and the
-# CodeQL workflow's setup-go version). Some dependencies now raise their
-# own go directive above 1.21 in newer releases, which would force the
-# toolchain -- and in one case a source change -- so they are pinned
-# here until we deliberately move off Go 1.21:
-#   * golang.org/x/crypto     -- v0.32+ require go >= 1.25
-#   * google.golang.org/grpc  -- v1.65+ require go >= 1.22 (v1.83 -> 1.25)
-#   * k8s.io/component-base   -- v0.30+ require newer Go, and the
-#                                logs/json package dropped the JSONLogger
-#                                variable used in cmd/main.go (needs a
-#                                code change before it can be bumped).
+# This project ships as a container image, so it is not bound to an older
+# Go compatibility floor the way an importable library would be. It tracks
+# a current Go toolchain and a current Kubernetes / gRPC dependency
+# generation. Patch and minor bumps across the k8s.io / sigs.k8s.io / klog /
+# gRPC stack are grouped below so they move together and stay mutually
+# compatible (that stack must be upgraded as a coherent set).
 #
 # GitHub Private Vulnerability Disclosure (PVD) should be enabled in
 # the repository's Security tab; that toggle is not file-driven.
@@ -44,10 +39,6 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
-      # Pinned to keep the module on Go 1.21 (see header comment).
-      - dependency-name: "golang.org/x/crypto"
-      - dependency-name: "google.golang.org/grpc"
-      - dependency-name: "k8s.io/component-base"
 
   - package-ecosystem: "gomod"
     directory: "/tools"

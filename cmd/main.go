@@ -16,9 +16,10 @@ import (
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/utils"
 	"github.com/OneIdentity/safeguard-csi-provider/pkg/version"
 
+	"github.com/go-logr/zapr"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	json "k8s.io/component-base/logs/json"
 	"k8s.io/klog/v2"
 	k8spb "sigs.k8s.io/secrets-store-csi-driver/provider/v1alpha1"
 )
@@ -43,7 +44,12 @@ func main() {
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT, os.Interrupt)
 
 	if *logFormatJSON {
-		klog.SetLogger(json.JSONLogger)
+		zapLogger, err := zap.NewProduction()
+		if err != nil {
+			klog.ErrorS(err, "failed to initialize JSON logger")
+			os.Exit(1)
+		}
+		klog.SetLogger(zapr.NewLogger(zapLogger))
 	}
 
 	if *versionInfo {

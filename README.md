@@ -160,7 +160,7 @@ The Secrets Store CSI Driver must be installed separately; see its
 
 ## Building
 
-Requires Go 1.21 or newer.
+Requires Go 1.25 or newer.
 
 ```bash
 make build          # linux/amd64 binary in _output/

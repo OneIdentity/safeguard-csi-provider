@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.25+
 - A C toolchain (gcc/clang) if you run the race detector locally
 - Docker or `buildx` for container images
 - `make`
