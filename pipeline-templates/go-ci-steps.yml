@@ -2,7 +2,6 @@
 # before publishing. Mirrors the safeguard-go CI pattern.
 parameters:
   goVersion: '$(goVersion)'
-  golangciLintVersion: '$(golangciLintVersion)'
 
 steps:
 - checkout: self
@@ -35,12 +34,13 @@ steps:
 
 - script: |
     set -euo pipefail
-    # Download the prebuilt binary straight from the release asset rather than
-    # piping install.sh, whose anonymous GitHub API version lookup is rate
-    # limited (60/hour/IP) and fails intermittently on shared hosted agents.
-    curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v${{ parameters.golangciLintVersion }}/golangci-lint-${{ parameters.golangciLintVersion }}-linux-amd64.tar.gz" -o /tmp/golangci-lint.tar.gz
-    tar -xzf /tmp/golangci-lint.tar.gz -C /tmp
-    "/tmp/golangci-lint-${{ parameters.golangciLintVersion }}-linux-amd64/golangci-lint" run --timeout=5m
+    # Build golangci-lint from the pinned tools module so it is compiled with this
+    # job's Go toolchain. Prebuilt release binaries are built with an older Go and
+    # refuse to analyze a module whose go directive is newer (this repo targets 1.25).
+    cd tools
+    go build -o /tmp/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint
+    cd ..
+    /tmp/golangci-lint run --timeout=5m
   displayName: 'Lint with golangci-lint'
 
 - script: go test -race ./...
