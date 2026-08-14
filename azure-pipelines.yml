@@ -2,8 +2,14 @@
 #
 # Every trigger (PRs, manual runs, and pushes to main/release-*) runs
 # build/lint/test only. Only a v* tag builds the multi-arch image, pushes it to
-# ghcr.io, moves :latest, and cuts a GitHub Release. Doc-only changes are
-# excluded from triggering builds.
+# ghcr.io, moves :latest, and cuts a GitHub Release.
+#
+# NOTE: the CI trigger deliberately has no `paths` filter. Azure DevOps ANDs
+# `paths` with `tags`, and a tag push carries no file diff, so any `paths`
+# filter silently drops every tag build (this is exactly why v0.3.0 never
+# auto-published). A `paths` filter can't be scoped to branches-only in a single
+# trigger, so we accept an occasional doc-only branch build in exchange for tags
+# reliably publishing. Doc-only PR noise is still filtered via the `pr` block.
 
 trigger:
   branches:
@@ -13,12 +19,6 @@ trigger:
   tags:
     include:
       - v*
-  paths:
-    exclude:
-      - '**/*.md'
-      - LICENSE
-      - docs/*
-      - .github/CODEOWNERS
 
 pr:
   branches:
