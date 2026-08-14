@@ -1,25 +1,5 @@
 # Dependabot configuration for safeguard-csi-provider.
-#
-# Ecosystems covered:
-#   * gomod           -- Go module dependencies. Two modules live in this
-#                        repo: the main module at the root and the build
-#                        tooling module under /tools.
-#   * github-actions  -- workflow file dependencies (CodeQL, etc.).
-#   * docker          -- base images referenced by the container build.
-#
-# Major-version bumps are excluded; they require human review and a
-# separate planning cycle (semantic-import versioning for Go means a
-# major bump changes the module import path).
-#
-# This project ships as a container image, so it is not bound to an older
-# Go compatibility floor the way an importable library would be. It tracks
-# a current Go toolchain and a current Kubernetes / gRPC dependency
-# generation. Patch and minor bumps across the k8s.io / sigs.k8s.io / klog /
-# gRPC stack are grouped below so they move together and stay mutually
-# compatible (that stack must be upgraded as a coherent set).
-#
-# GitHub Private Vulnerability Disclosure (PVD) should be enabled in
-# the repository's Security tab; that toggle is not file-driven.
+# Weekly patch/minor updates, grouped per ecosystem; major bumps need human review.
 version: 2
 updates:
   - package-ecosystem: "gomod"
