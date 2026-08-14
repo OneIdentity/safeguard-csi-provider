@@ -10,7 +10,7 @@ require (
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.55.0
 	google.golang.org/grpc v1.83.0
-	k8s.io/klog/v2 v2.120.1
+	k8s.io/klog/v2 v2.140.0
 	sigs.k8s.io/secrets-store-csi-driver v1.6.0
 )
 
